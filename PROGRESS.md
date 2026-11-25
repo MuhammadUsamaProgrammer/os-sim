@@ -7,7 +7,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 1 | Skeleton | DONE |
 | 2 | Scheduling core | DONE |
 | 3 | Memory core | DONE |
-| 4 | Deadlock core | todo |
+| 4 | Deadlock core | DONE |
 | 5 | Thread engine | todo |
 | 6 | GUI: Scheduling tab | todo |
 | 7 | GUI: Memory tab | todo |
@@ -39,6 +39,17 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   Samples `refstring_standard.txt`, `refstring_belady.txt`. Console command `memory`.
 - Run: `./build/apps/ossim_console memory` (from project root) or `memory "7,0,1,2" 3`.
 - Test result: `test_memory: 26 checks, 0 failures` (15/12/9, Belady 9/10, LRU hits 8 ratio 0.4).
+
+## Stage 4: Deadlock core
+- Built: `core/deadlock.*` (`bankersSafety` with the required pass scan, `bankersRequest`, `detectDeadlock`,
+  `recoverByTermination`, `buildRag` with DFS cycle search), `loadMatrixFile`, `loadRequestsCsv`,
+  samples `banker_sample.txt`, `deadlock_sample.txt` (P2 requests 0 0 1 -> P1..P4 deadlocked),
+  placeholder `requests_integrated.csv` (redesigned in Stage 9). Console command `deadlock`.
+- Run: `./build/apps/ossim_console deadlock`
+- Test result: `test_deadlock: 38 checks, 0 failures` (safe seq P1,P3,P4,P0,P2; detection order P0,P2,P3,P4,P1;
+  recovery kills P1 and clears the deadlock).
+- Note: in detection, a process with zero allocation is marked finished at the start (textbook rule)
+  and therefore not listed in `finishOrder`.
 
 ## Not done
 (nothing dropped yet)

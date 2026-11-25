@@ -1,0 +1,22 @@
+# processes=5 resources=3
+# Silberschatz detection example (A=7 B=2 C=6) with P2 now requesting 0 0 1.
+# Result: P1, P2, P3, P4 are deadlocked. (With P2 request 0 0 0 there is no deadlock.)
+available: 0 0 0
+alloc:
+0 1 0
+2 0 0
+3 0 3
+2 1 1
+0 0 2
+max:
+0 1 0
+4 0 2
+3 0 4
+3 1 1
+0 0 4
+request:
+0 0 0
+2 0 2
+0 0 1
+1 0 0
+0 0 2

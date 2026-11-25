@@ -1,0 +1,6 @@
+# Scripted resource requests for the integrated run (refined in Stage 9)
+pid,run_tick,r0,r1
+1,1,1,0
+2,1,0,1
+1,2,0,1
+2,2,1,0
