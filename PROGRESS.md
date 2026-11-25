@@ -13,7 +13,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 7 | GUI: Memory tab | DONE |
 | 8 | GUI: Deadlock tab + RAG | DONE |
 | 9 | Integration + export | DONE |
-| 10 | Polish, docs, final verification | todo |
+| 10 | Polish, docs, final verification | DONE |
 
 ## Environment
 Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Charts found).
@@ -122,5 +122,33 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
 - The integrated run is computed by core/ (not replayed by the thread engine), because killed/blocked processes
   do not fit the engine's "replay a finished timeline" model.
 
+## Stage 10: Polish, docs, final verification
+- Final verification (fresh directories, real output):
+  - `rm -rf build && mkdir build && cd build && cmake .. && make -j2` -> 0 warnings; `ctest --output-on-failure`
+    -> 100% tests passed, 0 tests failed out of 5 (scheduler 54, memory 26, deadlock 38, engine 34, integrated 44 checks).
+  - `QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest` -> exit 0 (67 PASS, 0 FAIL).
+  - `-DSANITIZE=thread` (all tests + console engine): 5/5, no ThreadSanitizer report.
+  - `-DSANITIZE=address` (address+undefined, whole app incl. GUI): 5/5, selftest exit 0, no reports.
+- Docs: `README.md`, `docs/REPORT.md`, `docs/VIVA_NOTES.md` (concepts + 25 questions),
+  `docs/screenshots/README.md` (8 screenshots to take, with steps).
+
+## Definition of done
+- [x] Clean build with zero warnings, all tests green.
+- [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
+- [x] `./gui/ossim` launches; all three tabs work; bad input shows warnings; `--selftest` exits 0 offscreen.
+- [x] Engine uses pthread_create/join, pthread_mutex_*, sem_init/wait/post/destroy, pthread_cond_* and pipe();
+      20 runs give byte-identical logs.
+- [x] TSAN and ASAN/UBSAN builds report nothing.
+- [x] Export writes .txt and .csv with all sections (checked by the self-test).
+- [x] README.md, docs/REPORT.md, docs/VIVA_NOTES.md, PROGRESS.md exist.
+- [x] One git commit per stage.
+
+## Still to do by the student
+- Take the screenshots listed in `docs/screenshots/README.md`.
+
 ## Not done
-(nothing dropped yet)
+Nothing from the stage list was dropped. Simplifications (also listed in REPORT.md, "Limitations"):
+- QtCharts is not used; all charts are `BarChartWidget` (custom QPainter).
+- The integrated run is computed in core/ and displayed at once; it is not replayed by the thread engine.
+- The fork/exec/wait demo is in the console program only (`ossim_console engine ... --real`).
+- Optimal replacement inside the integrated run uses each process's own future references.
