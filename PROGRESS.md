@@ -10,7 +10,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 4 | Deadlock core | DONE |
 | 5 | Thread engine | DONE |
 | 6 | GUI: Scheduling tab | DONE |
-| 7 | GUI: Memory tab | todo |
+| 7 | GUI: Memory tab | DONE |
 | 8 | GUI: Deadlock tab + RAG | todo |
 | 9 | Integration + export | todo |
 | 10 | Polish, docs, final verification | todo |
@@ -77,6 +77,15 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
 - Run: `cd build && ./gui/ossim`; self-test: `QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest` -> exit 0
   (set `OSSIM_SHOTS=<dir>` to also save PNG screenshots of the window).
 - Verified: FCFS sample avg WT 17, RR q=4 avg WT 5.6667, Compare all table + chart, animated replay finish times match core.
+
+## Stage 7: GUI, Memory tab
+- Built: `gui/MemoryTab` (reference string, frames 1-10, FIFO/LRU/Optimal/Compare all, Run, Random string,
+  Standard example, Belady example; frame table per algorithm with Frame rows + Result (HIT green / FAULT red,
+  tooltip = replaced page) + Evicted row; summary boxes; faults bar chart; Belady demo shows FIFO faults for
+  1..6 frames; page-table panel using `FrameAllocator::allocateEqual` + `buildPageTable` for the pids of
+  the Scheduling tab (shared process list)).
+- Self-test now also checks 15/12/9, Belady 9 vs 10, and warnings for "1,a" and an empty string.
+- Run: `cd build && ./gui/ossim` -> Memory tab -> Standard example.
 
 ## Not done
 (nothing dropped yet)

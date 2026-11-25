@@ -51,6 +51,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(mem_, &MemoryTab::logMessage, this, &MainWindow::appendLog);
     connect(dead_, &DeadlockTab::logMessage, this, &MainWindow::appendLog);
 
+    // One shared process list: the Memory tab reads the Scheduling tab's table.
+    mem_->setProcessProvider([this] {
+        std::vector<PCB> p;
+        if (!sched_->readProcesses(p, true)) p.clear();    // invalid table -> no processes
+        return p;
+    });
+    connect(sched_, &SchedulingTab::processesChanged, mem_, &MemoryTab::refreshPids);
+
     buildMenus();
     statusBar()->showMessage("Ready. Load a sample from File > Load sample, or enter processes.");
     loadSample(ui::samplesDir() + "/processes_fcfs.csv");
@@ -83,6 +91,9 @@ bool MainWindow::loadSample(const QString& path) {
     if (name.startsWith("processes_")) {
         ok = sched_->loadCsv(path);
         tabs_->setCurrentWidget(sched_);
+    } else if (name.startsWith("refstring_")) {
+        ok = mem_->loadRefFile(path);
+        tabs_->setCurrentWidget(mem_);
     } else {
         ui::info(this, "This sample is used by a tab that is not finished yet: " + name);
         return false;
@@ -193,6 +204,32 @@ int MainWindow::runSelfTest() {
     sched_->setProcesses({bad});
     stCheck(!sched_->runOnce() && ui::warningCount() == w + 2, "burst 0 -> warning");
     stCheck(!sched_->loadCsv(sd + "/banker_sample.txt"), "bad CSV -> warning");
+
+    // Memory: samples, every mode, the 15/12/9 numbers, Belady, bad input, page table
+    stCheck(loadSample(sd + "/refstring_belady.txt"), "load refstring_belady.txt");
+    stCheck(loadSample(sd + "/refstring_standard.txt"), "load refstring_standard.txt");
+    mem_->setFrames(3);
+    for (int m = 0; m < 3; ++m) { mem_->setMode(m); stCheck(mem_->run(), QString("memory mode %1").arg(m)); }
+    mem_->setMode(3);
+    stCheck(mem_->run() && mem_->lastResults().size() == 3, "memory compare all");
+    const auto& mr = mem_->lastResults();
+    stCheck(mr.size() == 3 && mr[0].faults == 15 && mr[1].faults == 12 && mr[2].faults == 9, "faults 15 / 12 / 9");
+    shot(this, "memory_compare");
+    mem_->beladyExample();
+    stCheck(mem_->beladyText().contains("3 frames -> 9 faults") && mem_->beladyText().contains("4 frames -> 10 faults"),
+            "Belady 9 vs 10");
+    shot(this, "memory_belady");
+    w = ui::warningCount();
+    mem_->setRefString("1,a");
+    stCheck(!mem_->run() && ui::warningCount() == w + 1, "bad reference string -> warning");
+    mem_->setRefString("");
+    stCheck(!mem_->run() && ui::warningCount() == w + 2, "empty reference string -> warning");
+    mem_->setRefString("7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1");
+    loadSample(sd + "/processes_srtf.csv");
+    mem_->refreshPids();
+    stCheck(true, "page table panel refresh");
+    tabs_->setCurrentWidget(mem_);
+    shot(this, "memory_pagetable");
 
     std::printf("[selftest] %s (%d failure(s))\n", g_stFail ? "FAILED" : "ALL PASSED", g_stFail);
     return g_stFail ? 1 : 0;
