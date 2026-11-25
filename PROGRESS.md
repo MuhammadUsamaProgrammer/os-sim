@@ -9,7 +9,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 3 | Memory core | DONE |
 | 4 | Deadlock core | DONE |
 | 5 | Thread engine | DONE |
-| 6 | GUI: Scheduling tab | todo |
+| 6 | GUI: Scheduling tab | DONE |
 | 7 | GUI: Memory tab | todo |
 | 8 | GUI: Deadlock tab + RAG | todo |
 | 9 | Integration + export | todo |
@@ -64,6 +64,19 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   pause/step/resume/stop under a 5 s `alarm()` watchdog).
 - Sanitizers (manual): `mkdir build-thread && cd build-thread && cmake .. -DSANITIZE=thread && make -j2 test_engine ... && ctest`
   and the same with `-DSANITIZE=address` (address+undefined): all tests pass, no reports.
+
+## Stage 6: GUI, Scheduling tab
+- Built: `gui/MainWindow` (tabs, monospace event-log dock, File/Help menus, About with group NBA, status bar),
+  `SchedulingTab` (editable process table, Add/Remove/Clear/Load/Save CSV, 6 algorithms, quantum only for RR,
+  Run / Run animated / Compare all, Pause/Step/Stop, speed slider 50-1000 ms), `GanttWidget` (custom paint,
+  scrollable, partial drawing while animating), `BarChartWidget` (QPainter grouped bars), `EngineBridge`
+  (engine observer -> queued Qt signal; per-run generation number drops stale events), `Style.h` (palette,
+  `ui::warn` dialogs that become stderr lines in self-test mode), `--selftest`.
+- Engine got `setTickDelay()` so the speed slider works during a run.
+- Charts: **BarChartWidget only; QtCharts is not used/linked** (avoids runtime/offscreen issues; allowed by CLAUDE.md).
+- Run: `cd build && ./gui/ossim`; self-test: `QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest` -> exit 0
+  (set `OSSIM_SHOTS=<dir>` to also save PNG screenshots of the window).
+- Verified: FCFS sample avg WT 17, RR q=4 avg WT 5.6667, Compare all table + chart, animated replay finish times match core.
 
 ## Not done
 (nothing dropped yet)

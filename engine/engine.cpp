@@ -93,6 +93,14 @@ void SimulationEngine::join() {
     for (pthread_t& t : procThreads_) pthread_join(t, nullptr);
 }
 
+// Changes the delay between ticks (protected by the mutex, read by the clock thread).
+void SimulationEngine::setTickDelay(int ms) {
+    pthread_mutex_lock(&mtx_);
+    opt_.tickDelayMs = ms < 0 ? 0 : ms;
+    pthread_cond_broadcast(&cond_);
+    pthread_mutex_unlock(&mtx_);
+}
+
 EngineSnapshot SimulationEngine::snapshot() const {
     pthread_mutex_lock(&mtx_);
     EngineSnapshot s;
@@ -189,17 +197,18 @@ void SimulationEngine::clockLoop() {
         dispatch();
 
         // 4. Optional animation delay (a timed wait, so stop()/step() interrupt it).
-        if (opt_.tickDelayMs > 0) {
+        pthread_mutex_lock(&mtx_);
+        int delay = opt_.tickDelayMs;
+        if (delay > 0) {
             timespec until;
             clock_gettime(CLOCK_REALTIME, &until);
-            long ns = until.tv_nsec + (long)opt_.tickDelayMs * 1000000L;
+            long ns = until.tv_nsec + (long)delay * 1000000L;
             until.tv_sec += ns / 1000000000L;
             until.tv_nsec = ns % 1000000000L;
-            pthread_mutex_lock(&mtx_);
             while (!stopRequested_ && !(paused_ && stepBudget_ > 0))
                 if (pthread_cond_timedwait(&cond_, &mtx_, &until) == ETIMEDOUT) break;
-            pthread_mutex_unlock(&mtx_);
         }
+        pthread_mutex_unlock(&mtx_);
     }
 
     // End of the run: tell the process threads to exit and wake each of them.

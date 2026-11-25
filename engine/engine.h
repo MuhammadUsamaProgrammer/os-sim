@@ -47,6 +47,7 @@ public:
     void step();                          // runs exactly one tick, then stays paused
     void stop();                          // ends the run early
     void join();                          // pthread_join all threads (idempotent)
+    void setTickDelay(int ms);            // change the animation speed while running
 
     EngineSnapshot snapshot() const;      // thread-safe copy of tick + states
     std::vector<std::string> log() const; // every line drained so far
