@@ -6,7 +6,7 @@ Read this first after a session restart; continue from the first unfinished stag
 |---|---|---|
 | 1 | Skeleton | DONE |
 | 2 | Scheduling core | DONE |
-| 3 | Memory core | todo |
+| 3 | Memory core | DONE |
 | 4 | Deadlock core | todo |
 | 5 | Thread engine | todo |
 | 6 | GUI: Scheduling tab | todo |
@@ -32,6 +32,13 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
 - Run: `cd build && ./apps/ossim_console sched ../samples/processes_srtf.csv 4` (or from project root `./build/apps/ossim_console`)
 - Test result: `test_scheduler: 54 checks, 0 failures`.
 - Note: tie rule "same key -> earlier arrival -> lower pid" is applied literally, also for SRTF preemption.
+
+## Stage 3: Memory core
+- Built: `core/memory.*`: `FramePool` (one replacement policy object: FIFO/LRU/Optimal, ties -> earliest loaded,
+  fill frames 0,1,2..), `runPageReplacement`, `parseRefString`, `FrameAllocator::allocateEqual`, `buildPageTable`.
+  Samples `refstring_standard.txt`, `refstring_belady.txt`. Console command `memory`.
+- Run: `./build/apps/ossim_console memory` (from project root) or `memory "7,0,1,2" 3`.
+- Test result: `test_memory: 26 checks, 0 failures` (15/12/9, Belady 9/10, LRU hits 8 ratio 0.4).
 
 ## Not done
 (nothing dropped yet)
