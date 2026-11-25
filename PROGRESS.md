@@ -8,7 +8,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 2 | Scheduling core | DONE |
 | 3 | Memory core | DONE |
 | 4 | Deadlock core | DONE |
-| 5 | Thread engine | todo |
+| 5 | Thread engine | DONE |
 | 6 | GUI: Scheduling tab | todo |
 | 7 | GUI: Memory tab | todo |
 | 8 | GUI: Deadlock tab + RAG | todo |
@@ -50,6 +50,20 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   recovery kills P1 and clears the deadlock).
 - Note: in detection, a process with zero allocation is marked finished at the start (textbook rule)
   and therefore not listed in `finishOrder`.
+
+## Stage 5: Thread engine
+- Built: `engine/logger.*` (`PipeLogger`: `pipe()`, one atomic `write()` per line, `O_NONBLOCK` reader `drainLog()`),
+  `engine/engine.*` (`SimulationEngine`: clock thread + one pthread per process; handshake
+  `sem_post(runSem[i])` -> process -> `sem_post(doneSem)`; mutex on all shared state; `pthread_cond_wait`
+  for pause/step and `pthread_cond_timedwait` for the tick delay; clock thread is the single dispatcher
+  that drains the pipe and calls the observer; `realProcessDemo()` with fork/execlp/waitpid).
+- Shutdown design: `stop()` only ends the clock loop; the clock thread then sets `exitThreads_` and posts every
+  `runSem`, so a process thread can never exit while the clock waits on `doneSem`.
+- Run: `./build/apps/ossim_console engine samples/processes_srtf.csv rr 4 --real`
+- Tests: `test_engine: 34 checks, 0 failures` (finish 24/27/30, one TERMINATED each, 20 identical logs,
+  pause/step/resume/stop under a 5 s `alarm()` watchdog).
+- Sanitizers (manual): `mkdir build-thread && cd build-thread && cmake .. -DSANITIZE=thread && make -j2 test_engine ... && ctest`
+  and the same with `-DSANITIZE=address` (address+undefined): all tests pass, no reports.
 
 ## Not done
 (nothing dropped yet)

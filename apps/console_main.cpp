@@ -1,5 +1,5 @@
 // console_main.cpp - console demo of OS-Sim (executable ossim_console).
-// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]]
+// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real]]
 // With no arguments it runs every demo on the sample files.
 #include <cstdio>
 #include <iostream>
@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "memory.h"
 #include "deadlock.h"
+#include "engine.h"
 
 // Prints a text Gantt chart such as |P1......|P2..| with a time ruler.
 static void printGantt(const SchedResult& r) {
@@ -119,6 +120,28 @@ static void demoDeadlock(const std::string& bankerFile, const std::string& deadl
                                         : "deadlock cleared");
 }
 
+// Replays a schedule with the threaded engine and prints the live log (observer).
+static void demoEngine(const std::string& path, Algo algo, int quantum, bool real) {
+    std::vector<PCB> procs = loadProcessesCsv(path);
+    SchedResult r = runScheduler(algo, procs, quantum);
+    std::cout << "\n######## Engine replay of " << algoName(algo) << " on " << path << " ########\n";
+    SimulationEngine eng(procs, r.timeline, EngineOptions{100, real});
+    eng.setObserver([](const EngineEvent& e) { std::cout << e.text << std::endl; });
+    eng.start();
+    eng.join();
+    for (const PCB& p : eng.pcbs()) std::printf("  P%d finish=%d\n", p.pid, p.finish);
+}
+
+// Maps a command-line name such as "rr" to an algorithm.
+static Algo algoFromName(const std::string& n) {
+    if (n == "sjf") return Algo::SJF;
+    if (n == "srtf") return Algo::SRTF;
+    if (n == "rr") return Algo::RR;
+    if (n == "prio") return Algo::PRIORITY_NP;
+    if (n == "prio-p") return Algo::PRIORITY_P;
+    return Algo::FCFS;
+}
+
 int main(int argc, char** argv) {
     std::string cmd = argc > 1 ? argv[1] : "all";
     try {
@@ -136,13 +159,22 @@ int main(int argc, char** argv) {
         } else if (cmd == "deadlock") {
             demoDeadlock(argc > 2 ? argv[2] : "samples/banker_sample.txt",
                          argc > 3 ? argv[3] : "samples/deadlock_sample.txt");
+        } else if (cmd == "engine") {
+            bool real = false;
+            std::vector<std::string> pos;
+            for (int i = 2; i < argc; ++i) {
+                if (std::string(argv[i]) == "--real") real = true; else pos.push_back(argv[i]);
+            }
+            demoEngine(pos.size() > 0 ? pos[0] : "samples/processes_fcfs.csv",
+                       algoFromName(pos.size() > 1 ? pos[1] : "fcfs"),
+                       pos.size() > 2 ? std::stoi(pos[2]) : 4, real);
         } else if (cmd == "all") {
             for (const char* f : {"samples/processes_fcfs.csv", "samples/processes_srtf.csv",
                                   "samples/processes_priority.csv"}) demoScheduling(f, 4);
             demoMemory(readTextFile("samples/refstring_standard.txt"), 3);
             demoDeadlock("samples/banker_sample.txt", "samples/deadlock_sample.txt");
         } else {
-            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]]\n";
+            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real]]\n";
             return 2;
         }
     } catch (const std::exception& e) {
