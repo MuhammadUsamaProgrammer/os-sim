@@ -11,7 +11,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 5 | Thread engine | DONE |
 | 6 | GUI: Scheduling tab | DONE |
 | 7 | GUI: Memory tab | DONE |
-| 8 | GUI: Deadlock tab + RAG | todo |
+| 8 | GUI: Deadlock tab + RAG | DONE |
 | 9 | Integration + export | todo |
 | 10 | Polish, docs, final verification | todo |
 
@@ -86,6 +86,18 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   the Scheduling tab (shared process list)).
 - Self-test now also checks 15/12/9, Belady 9 vs 10, and warnings for "1,a" and an empty string.
 - Run: `cd build && ./gui/ossim` -> Memory tab -> Standard example.
+
+## Stage 8: GUI, Deadlock tab and RAG
+- Built: `gui/DeadlockTab` (process 1-10 / resource 1-6 spin boxes; editable Allocation, Max, Request, Available;
+  read-only Need with "!" when Allocation > Max; Load Banker's / deadlock sample, Clear; Check safety with step
+  trace, Request resources (granted requests are applied), Detect deadlock (rows red), Recover (one victim every
+  700 ms, killed rows grey)), `gui/RagView` (QGraphicsScene: process circles on top, resource squares with
+  instance dots below, solid assignment / dashed request edges with arrowheads and counts, deadlocked processes
+  and cycle edges red).
+- Self-test checks SAFE <P1, P3, P4, P0, P2>, P1 (1 0 2) granted, P4 (3 3 0) and P0 (0 2 0) denied,
+  P1..P4 deadlocked, recovery clears it, and warnings for bad input.
+- Note: after recovery a cycle P2 -> C -> P2 is still drawn red although there is no deadlock; this is
+  intended (multi-instance resources: a cycle is necessary, not sufficient).
 
 ## Not done
 (nothing dropped yet)

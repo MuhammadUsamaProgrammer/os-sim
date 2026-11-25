@@ -94,6 +94,9 @@ bool MainWindow::loadSample(const QString& path) {
     } else if (name.startsWith("refstring_")) {
         ok = mem_->loadRefFile(path);
         tabs_->setCurrentWidget(mem_);
+    } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
+        ok = dead_->loadFile(path);
+        tabs_->setCurrentWidget(dead_);
     } else {
         ui::info(this, "This sample is used by a tab that is not finished yet: " + name);
         return false;
@@ -230,6 +233,32 @@ int MainWindow::runSelfTest() {
     stCheck(true, "page table panel refresh");
     tabs_->setCurrentWidget(mem_);
     shot(this, "memory_pagetable");
+
+    // Deadlock: Banker's sample, request, detection sample, RAG, recovery, bad input
+    stCheck(loadSample(sd + "/banker_sample.txt"), "load banker_sample.txt");
+    stCheck(dead_->checkSafety() && dead_->statusText() == "SAFE: <P1, P3, P4, P0, P2>", "Banker SAFE <P1, P3, P4, P0, P2>");
+    shot(this, "deadlock_safe");
+    stCheck(dead_->requestResources(1, "1 0 2"), "request P1 (1 0 2) granted");
+    stCheck(!dead_->requestResources(4, "3 3 0"), "request P4 (3 3 0) denied");
+    stCheck(!dead_->requestResources(0, "0 2 0"), "request P0 (0 2 0) denied (unsafe)");
+    w = ui::warningCount();
+    stCheck(!dead_->requestResources(0, "1 x") && ui::warningCount() == w + 1, "bad request text -> warning");
+    stCheck(loadSample(sd + "/deadlock_sample.txt"), "load deadlock_sample.txt");
+    stCheck(dead_->detect() && dead_->lastDetection() && dead_->lastDetection()->deadlocked &&
+            dead_->lastDetection()->deadlocked_pids == std::vector<int>({1, 2, 3, 4}), "detect P1..P4 deadlocked");
+    shot(this, "deadlock_detected");
+    bool recDone = false;
+    auto rc = connect(dead_, &DeadlockTab::recoveryFinished, this, [&] { recDone = true; });
+    stCheck(dead_->recover(100), "start recovery");
+    stCheck(waitFor([&] { return recDone; }, 5000), "recovery finishes");
+    disconnect(rc);
+    stCheck(dead_->lastDetection() && !dead_->lastDetection()->deadlocked, "recovery clears the deadlock");
+    shot(this, "deadlock_recovered");
+    dead_->setCell("alloc", 0, 0, 99);              // Allocation > Max
+    w = ui::warningCount();
+    stCheck(!dead_->checkSafety() && ui::warningCount() == w + 1, "allocation > max -> warning");
+    dead_->clearAll();
+    stCheck(dead_->detect(), "detect on cleared tables");
 
     std::printf("[selftest] %s (%d failure(s))\n", g_stFail ? "FAILED" : "ALL PASSED", g_stFail);
     return g_stFail ? 1 : 0;
