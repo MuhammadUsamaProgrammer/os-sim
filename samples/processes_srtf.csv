@@ -1,0 +1,6 @@
+# Classic SRTF example: avg WT = 6.5 with SRTF, 7.75 with SJF
+pid,arrival,burst,priority,pages
+1,0,8,2,4
+2,1,4,1,3
+3,2,9,4,5
+4,3,5,3,3

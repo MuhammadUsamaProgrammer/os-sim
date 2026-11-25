@@ -1,0 +1,7 @@
+# Classic priority example (lower number = higher priority): avg WT = 8.2 non-preemptive
+pid,arrival,burst,priority,pages
+1,0,10,3,4
+2,0,1,1,2
+3,0,2,4,3
+4,0,1,5,2
+5,0,5,2,3
