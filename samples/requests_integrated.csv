@@ -1,6 +1,14 @@
-# Scripted resource requests for the integrated run (refined in Stage 9)
-pid,run_tick,r0,r1
-1,1,1,0
-2,1,0,1
-1,2,0,1
-2,2,1,0
+# Scripted resource requests for the integrated run.
+# Use with samples/processes_srtf.csv, Round Robin q=2.
+# Resource types: A and B have ONE instance each, C has two.
+# Without avoidance: P1 holds A and wants B, P2 holds B and wants A -> deadlock
+# (detected and recovered by killing a victim). With Banker's avoidance P2's
+# request for B is refused while it would make the state unsafe -> no deadlock.
+# total=1 1 2
+pid,run_tick,r0,r1,r2
+1,1,1,0,0
+2,1,0,1,0
+1,2,0,1,0
+2,2,1,0,0
+3,2,0,0,1
+4,1,0,0,1

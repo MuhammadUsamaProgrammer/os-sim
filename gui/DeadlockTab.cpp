@@ -51,12 +51,14 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     auto* bankBtn = new QPushButton("Load Banker's sample");
     auto* deadBtn = new QPushButton("Load deadlock sample");
     auto* clrBtn = new QPushButton("Clear");
+    auto* pidBtn = new QPushButton("Use Scheduling tab pids");
+    pidBtn->setToolTip("Label the rows with the processes of the Scheduling tab (shared process list)");
     auto* top = new QHBoxLayout;
     top->setSpacing(8);
     top->addWidget(new QLabel("Processes:")); top->addWidget(procSpin_);
     top->addWidget(new QLabel("Resources:")); top->addWidget(resSpin_);
     top->addStretch();
-    top->addWidget(bankBtn); top->addWidget(deadBtn); top->addWidget(clrBtn);
+    top->addWidget(bankBtn); top->addWidget(deadBtn); top->addWidget(pidBtn); top->addWidget(clrBtn);
 
     // ---- matrices ----
     allocT_ = makeMatrix(true);
@@ -86,7 +88,7 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     auto* reqBtn = new QPushButton("Request resources");
     auto* detBtn = new QPushButton("Detect deadlock");
     auto* recBtn = new QPushButton("Recover");
-    actionBtns_ = {safeBtn, reqBtn, detBtn, recBtn, bankBtn, deadBtn, clrBtn};
+    actionBtns_ = {safeBtn, reqBtn, detBtn, recBtn, bankBtn, deadBtn, clrBtn, pidBtn};
     reqPid_ = new QComboBox;
     reqEdit_ = new QLineEdit("1 0 2");
     reqEdit_->setPlaceholderText("e.g. 1 0 2");
@@ -146,6 +148,7 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     connect(bankBtn, &QPushButton::clicked, this, [this] { loadFile(ui::samplesDir() + "/banker_sample.txt"); });
     connect(deadBtn, &QPushButton::clicked, this, [this] { loadFile(ui::samplesDir() + "/deadlock_sample.txt"); });
     connect(clrBtn, &QPushButton::clicked, this, &DeadlockTab::clearAll);
+    connect(pidBtn, &QPushButton::clicked, this, &DeadlockTab::wantProcessPids);
     connect(safeBtn, &QPushButton::clicked, this, [this] { checkSafety(); });
     connect(reqBtn, &QPushButton::clicked, this, [this] { requestResources(reqPid_->currentIndex(), reqEdit_->text()); });
     connect(detBtn, &QPushButton::clicked, this, [this] { detect(); });
@@ -234,6 +237,29 @@ void DeadlockTab::writeMatrix(QTableWidget* t, const Matrix& m) {
 }
 
 void DeadlockTab::writeAvail(const Vec& v) { writeMatrix(availT_, Matrix{v}); }
+
+// Loads the integrated run's resource state at its first deadlock.
+void DeadlockTab::loadState(const std::vector<int>& rowPids, const Matrix& alloc, const Matrix& max,
+                            const Matrix& request, const Vec& avail, const QString& title) {
+    int n = (int)alloc.size(), m = (int)avail.size();
+    if (n < 1 || n > 10 || m < 1 || m > 6) return;          // tab limits
+    setSize(n, m);
+    rowPids_ = rowPids;
+    onSizeChanged();                                        // relabel rows with the real pids
+    writeMatrix(allocT_, alloc);
+    writeMatrix(maxT_, max);
+    writeMatrix(reqT_, request);
+    writeAvail(avail);
+    lastSafety_.reset();
+    lastDetect_.reset();
+    trace_->clear();
+    history_.clear();
+    status_->setText(title);
+    status_->setStyleSheet("");
+    updateNeed();
+    redraw();
+    emit logMessage("Deadlock: " + title);
+}
 
 // Loads a matrix sample file (Banker's or detection).
 bool DeadlockTab::loadFile(const QString& path) {
@@ -543,5 +569,25 @@ QString DeadlockTab::reportText() const {
                   dump("Request", reqT_) + dump("Available", availT_);
     out += "Last result: " + status_->text() + "\n";
     for (const QString& h : history_) out += "  " + h + "\n";
+    return out;
+}
+
+// CSV block: one line per process with its Allocation / Max / Need / Request.
+QString DeadlockTab::csvSection() const {
+    QString out = "## Deadlock state\nprocess";
+    int m = availT_->columnCount();
+    for (const char* name : {"alloc", "max", "need", "request"})
+        for (int j = 0; j < m; ++j) out += QString(",%1_%2").arg(name).arg(QChar('A' + j));
+    out += "\n";
+    for (int i = 0; i < allocT_->rowCount(); ++i) {
+        out += pidName(i);
+        for (QTableWidget* t : {allocT_, maxT_, needT_, reqT_})
+            for (int j = 0; j < m; ++j) out += "," + (t->item(i, j) ? t->item(i, j)->text() : "0");
+        out += "\n";
+    }
+    out += "available";
+    for (int j = 0; j < m; ++j) out += "," + (availT_->item(0, j) ? availT_->item(0, j)->text() : "0");
+    out += "\n\n## Deadlock result\nresult\n\"" + status_->text() + "\"\n";
+    for (const QString& h : history_) out += "\"" + QString(h).replace('"', '\'') + "\"\n";
     return out;
 }

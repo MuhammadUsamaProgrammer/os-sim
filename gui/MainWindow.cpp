@@ -5,7 +5,10 @@
 #include <QDockWidget>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QTextStream>
+#include <QDateTime>
 #include <QFontDatabase>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -58,6 +61,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         return p;
     });
     connect(sched_, &SchedulingTab::processesChanged, mem_, &MemoryTab::refreshPids);
+    // Same pids in the Deadlock tab: on request, and automatically after an integrated-run deadlock.
+    connect(dead_, &DeadlockTab::wantProcessPids, this, [this] {
+        std::vector<PCB> p;
+        if (sched_->readProcesses(p)) dead_->useProcessPids(p);
+    });
+    connect(sched_, &SchedulingTab::integratedDeadlock, this,
+            [this](const std::vector<int>& pids, const DeadlockSnapshot& d) {
+        dead_->loadState(pids, d.alloc, d.max, d.request, d.avail,
+                         QString("State from the integrated run at t=%1 (first deadlock). Press Detect / Recover.").arg(d.tick));
+        statusBar()->showMessage("Deadlock during the integrated run: its state was copied to the Deadlock tab", 8000);
+    });
 
     buildMenus();
     statusBar()->showMessage("Ready. Load a sample from File > Load sample, or enter processes.");
@@ -97,6 +111,13 @@ bool MainWindow::loadSample(const QString& path) {
     } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
         ok = dead_->loadFile(path);
         tabs_->setCurrentWidget(dead_);
+    } else if (name.startsWith("requests_")) {
+        // The integrated sample is designed for processes_srtf.csv with Round Robin q=2.
+        ok = sched_->loadCsv(ui::samplesDir() + "/processes_srtf.csv");
+        sched_->setAlgorithm(Algo::RR);
+        sched_->setQuantum(2);
+        sched_->setIntegratedOptions(path, true, true, 6, 5);
+        tabs_->setCurrentWidget(sched_);
     } else {
         ui::info(this, "This sample is used by a tab that is not finished yet: " + name);
         return false;
@@ -117,8 +138,152 @@ void MainWindow::showAbout() {
         "Muhammad Usama (03-135242-038)</p>");
 }
 
+// File -> Export report...: asks for a base name, writes <name>.txt and <name>.csv.
 void MainWindow::exportReport() {
-    ui::info(this, "Export is added in Stage 9.");
+    QString f = QFileDialog::getSaveFileName(this, "Export report (base name)", "ossim_report",
+                                             "Report (*.txt *.csv)");
+    if (f.isEmpty()) return;
+    QFileInfo fi(f);
+    QString base = (fi.suffix() == "txt" || fi.suffix() == "csv") ? fi.path() + "/" + fi.completeBaseName() : f;
+    QString err;
+    if (writeReport(base, &err))
+        ui::info(this, QString("Report saved:\n%1.txt\n%1.csv").arg(base));
+    else
+        ui::warn(this, "Export failed: " + err);
+}
+
+// Quotes a CSV field if needed.
+static QString csvField(QString s) {
+    if (s.contains(',') || s.contains('"')) s = '"' + s.replace('"', "\"\"") + '"';
+    return s;
+}
+
+bool MainWindow::writeReport(const QString& base, QString* err) {
+    QString txt, csv;
+    QTextStream T(&txt), C(&csv);
+    T << "OS-Sim report - " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n"
+      << "Group NBA: Aagha Ali Hassan, Hamza Malik, Muhammad Usama\n\n";
+    C << "## OS-Sim report\ngenerated," << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n\n";
+
+    // 1. Processes
+    T << "=== Processes ===\nPID  Arrival  Burst  Priority  Pages\n";
+    C << "## Processes\npid,arrival,burst,priority,pages\n";
+    std::vector<PCB> procs;
+    sched_->readProcesses(procs, true);
+    for (const PCB& p : procs) {
+        T << QString("P%1  %2  %3  %4  %5\n").arg(p.pid, -3).arg(p.arrival, 7).arg(p.burst, 5).arg(p.priority, 8).arg(p.pages, 5);
+        C << p.pid << ',' << p.arrival << ',' << p.burst << ',' << p.priority << ',' << p.pages << '\n';
+    }
+    // 2. Scheduling result
+    T << "\n=== Scheduling result ===\n";
+    C << "\n## Scheduling result\n";
+    if (const auto& r = sched_->lastResult()) {
+        T << "Algorithm: " << algoName(r->algo) << (r->algo == Algo::RR ? QString(" (q=%1)").arg(r->quantum) : "") << "\nGantt:";
+        C << "algorithm," << csvField(algoName(r->algo)) << "\nquantum," << r->quantum << "\ngantt";
+        for (const Segment& s : r->timeline) {
+            QString who = s.pid < 0 ? "idle" : QString("P%1").arg(s.pid);
+            T << QString(" %1[%2-%3]").arg(who).arg(s.start).arg(s.end);
+            C << ',' << who << ' ' << s.start << '-' << s.end;
+        }
+        T << "\nPID  Arrival  Burst  Completion  Waiting  Turnaround  Response\n";
+        C << "\npid,arrival,burst,completion,waiting,turnaround,response\n";
+        for (const ProcMetrics& m : r->metrics) {
+            T << QString("P%1 %2 %3 %4 %5 %6 %7\n").arg(m.pid, -3).arg(m.arrival, 8).arg(m.burst, 6).arg(m.completion, 11)
+                     .arg(m.waiting, 8).arg(m.turnaround, 11).arg(m.response, 9);
+            C << m.pid << ',' << m.arrival << ',' << m.burst << ',' << m.completion << ',' << m.waiting << ','
+              << m.turnaround << ',' << m.response << '\n';
+        }
+        T << QString("Averages: WT=%1 TAT=%2 RT=%3  context switches=%4  CPU utilisation=%5%\n")
+                 .arg(r->avgWaiting, 0, 'f', 4).arg(r->avgTurnaround, 0, 'f', 4).arg(r->avgResponse, 0, 'f', 4)
+                 .arg(r->contextSwitches).arg(cpuUtilization(*r), 0, 'f', 1);
+        C << "averages,,,," << r->avgWaiting << ',' << r->avgTurnaround << ',' << r->avgResponse << '\n'
+          << "context_switches," << r->contextSwitches << "\ncpu_utilisation," << cpuUtilization(*r) << '\n';
+    } else {
+        T << "(not run)\n";
+        C << "not run\n";
+    }
+    // 3. Comparison
+    T << "\n=== Algorithm comparison ===\n";
+    C << "\n## Algorithm comparison\nalgorithm,avg_waiting,avg_turnaround,avg_response,context_switches\n";
+    if (sched_->lastComparison().empty()) { T << "(not run)\n"; C << "not run\n"; }
+    for (const SchedResult& r : sched_->lastComparison()) {
+        T << QString("%1 WT=%2 TAT=%3 RT=%4 CS=%5\n").arg(algoName(r.algo), -15).arg(r.avgWaiting, 0, 'f', 2)
+                 .arg(r.avgTurnaround, 0, 'f', 2).arg(r.avgResponse, 0, 'f', 2).arg(r.contextSwitches);
+        C << csvField(algoName(r.algo)) << ',' << r.avgWaiting << ',' << r.avgTurnaround << ',' << r.avgResponse
+          << ',' << r.contextSwitches << '\n';
+    }
+    // 4. Integrated run
+    T << "\n=== Integrated run ===\n";
+    C << "\n## Integrated run\n";
+    if (const auto& r = sched_->lastIntegrated()) {
+        QStringList killed;
+        for (int p : r->killedPids) killed << QString("P%1").arg(p);
+        T << QString("memory faults=%1 hits=%2 hit ratio=%3; requests granted=%4 denied=%5; deadlocks detected=%6; killed: %7\n")
+                 .arg(r->memFaults).arg(r->memHits).arg(r->hitRatio, 0, 'f', 3).arg(r->requestsGranted)
+                 .arg(r->requestsDenied).arg(r->deadlocksDetected).arg(killed.isEmpty() ? "none" : killed.join(", "));
+        C << "mem_faults," << r->memFaults << "\nmem_hits," << r->memHits << "\nhit_ratio," << r->hitRatio
+          << "\nrequests_granted," << r->requestsGranted << "\nrequests_denied," << r->requestsDenied
+          << "\ndeadlocks_detected," << r->deadlocksDetected << "\nkilled," << killed.join(' ') << '\n'
+          << "pid,completion,waiting,turnaround,response\n";
+        for (const ProcMetrics& m : r->metrics) {
+            T << QString("P%1 completion=%2 waiting=%3 turnaround=%4\n").arg(m.pid).arg(m.completion).arg(m.waiting).arg(m.turnaround);
+            C << m.pid << ',' << m.completion << ',' << m.waiting << ',' << m.turnaround << ',' << m.response << '\n';
+        }
+    } else {
+        T << "(not run)\n";
+        C << "not run\n";
+    }
+    // 5. Memory
+    T << "\n=== Memory (page replacement) ===\n";
+    C << "\n## Memory summary\nalgorithm,frames,references,faults,hits,hit_ratio\n";
+    if (mem_->lastResults().empty()) { T << "(not run)\n"; C << "not run\n"; }
+    for (const MemResult& r : mem_->lastResults()) {
+        T << QString("%1, %2 frames: faults=%3 hits=%4 hit ratio=%5\n").arg(pageAlgoName(r.algo)).arg(r.numFrames)
+                 .arg(r.faults).arg(r.hits).arg(r.hitRatio, 0, 'f', 3);
+        C << pageAlgoName(r.algo) << ',' << r.numFrames << ',' << r.steps.size() << ',' << r.faults << ',' << r.hits
+          << ',' << r.hitRatio << '\n';
+    }
+    if (!mem_->beladyText().isEmpty()) T << mem_->beladyText() << "\n";
+    C << "\n## Memory frame table\n";
+    for (const MemResult& r : mem_->lastResults()) {
+        T << "\n" << pageAlgoName(r.algo) << " frame table:\nref    ";
+        C << "algorithm," << pageAlgoName(r.algo) << "\nref";
+        for (const MemStep& s : r.steps) { T << QString("%1").arg(s.page, 3); C << ',' << s.page; }
+        for (int f = 0; f < r.numFrames; ++f) {
+            T << QString("\nframe%1 ").arg(f + 1);
+            C << "\nframe" << f + 1;
+            for (const MemStep& s : r.steps) {
+                T << (s.frames[f] < 0 ? QString("  -") : QString("%1").arg(s.frames[f], 3));
+                C << ',' << (s.frames[f] < 0 ? QString() : QString::number(s.frames[f]));
+            }
+        }
+        T << "\nresult ";
+        C << "\nresult";
+        for (const MemStep& s : r.steps) { T << (s.fault ? "  F" : "  H"); C << ',' << (s.fault ? "FAULT" : "HIT"); }
+        T << "\n";
+        C << "\n";
+    }
+    // 6. Deadlock
+    T << "\n=== Deadlock ===\n" << dead_->reportText();
+    C << "\n" << dead_->csvSection();
+    // 7. Event log
+    QString logText = log_->toPlainText();
+    T << "\n=== Event log ===\n" << logText << "\n";
+    C << "\n## Event log\nline\n";
+    for (const QString& l : logText.split('\n')) C << csvField(l) << '\n';
+    T.flush();
+    C.flush();
+
+    for (const auto& [suffix, text] : {std::pair<QString, QString>{".txt", txt}, {".csv", csv}}) {
+        QFile out(base + suffix);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            if (err) *err = "cannot write " + base + suffix;
+            return false;
+        }
+        out.write(text.toUtf8());
+    }
+    emit appendLog("Report exported to " + base + ".txt and " + base + ".csv");
+    return true;
 }
 
 // ---------------------------------------------------------------- self-test
@@ -259,6 +424,44 @@ int MainWindow::runSelfTest() {
     stCheck(!dead_->checkSafety() && ui::warningCount() == w + 1, "allocation > max -> warning");
     dead_->clearAll();
     stCheck(dead_->detect(), "detect on cleared tables");
+
+    // Integrated run: avoidance on -> no deadlock; off -> deadlock detected and recovered
+    stCheck(loadSample(sd + "/requests_integrated.csv"), "load requests_integrated.csv");
+    stCheck(sched_->runIntegrated() && sched_->lastIntegrated()->deadlocksDetected == 0, "integrated, avoidance ON: no deadlock");
+    shot(this, "integrated_avoidance_on");
+    sched_->setIntegratedOptions(sd + "/requests_integrated.csv", false, true, 6, 5);
+    stCheck(sched_->runIntegrated() && sched_->lastIntegrated()->deadlocksDetected >= 1 &&
+            !sched_->lastIntegrated()->killedPids.empty(), "integrated, avoidance OFF: deadlock detected + recovered");
+    shot(this, "integrated_avoidance_off");
+    stCheck(dead_->rowPids() == std::vector<int>({1, 2, 3, 4}), "Deadlock tab shows the integrated state with the same pids");
+    stCheck(dead_->detect() && dead_->lastDetection()->deadlocked, "integrated state is deadlocked in the Deadlock tab");
+    tabs_->setCurrentWidget(dead_);
+    shot(this, "integrated_in_deadlock_tab");
+    w = ui::warningCount();
+    sched_->setIntegratedOptions(sd + "/does_not_exist.csv", true, true, 6, 5);
+    stCheck(!sched_->runIntegrated() && ui::warningCount() == w + 1, "missing requests file -> warning");
+    sched_->setIntegratedOptions(sd + "/requests_integrated.csv", true, true, 6, 5);
+
+    // Export: both files, every section
+    sched_->runOnce();
+    sched_->compareAll();
+    QString base = QDir::temp().filePath(QString("ossim_selftest_%1").arg(QCoreApplication::applicationPid()));
+    QString err;
+    stCheck(writeReport(base, &err), "export report " + err);
+    QFile tf(base + ".txt"), cf(base + ".csv");
+    bool opened = tf.open(QIODevice::ReadOnly) && cf.open(QIODevice::ReadOnly);
+    QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
+    bool allTxt = true, allCsv = true;
+    for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
+                            "=== Memory", "=== Deadlock", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+    for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
+                            "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
+                            "## Event log"}) allCsv = allCsv && c.contains(sec);
+    stCheck(opened && allTxt, "report .txt has all sections");
+    stCheck(opened && allCsv, "report .csv has all sections");
+    tf.close(); cf.close();
+    QFile::remove(base + ".txt");
+    QFile::remove(base + ".csv");
 
     std::printf("[selftest] %s (%d failure(s))\n", g_stFail ? "FAILED" : "ALL PASSED", g_stFail);
     return g_stFail ? 1 : 0;

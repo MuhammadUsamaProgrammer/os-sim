@@ -153,7 +153,7 @@ MatrixData loadMatrixFile(const std::string& path) {
 }
 
 // Loads scripted resource requests for the integrated run.
-std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path) {
+std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path, Vec* total) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("cannot open " + path);
     std::vector<ScriptedRequest> out;
@@ -162,8 +162,14 @@ std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path) {
     while (std::getline(in, line)) {
         ++lineNo;
         line = trim(line);
-        if (line.empty() || line[0] == '#' || line.rfind("pid", 0) == 0) continue;
         std::string where = path + " line " + std::to_string(lineNo);
+        size_t tp = line.find("total=");
+        if (!line.empty() && line[0] == '#' && tp != std::string::npos) {
+            Vec tot = parseSpaceInts(line.substr(tp + 6), where);
+            if (total) *total = tot;
+            continue;
+        }
+        if (line.empty() || line[0] == '#' || line.rfind("pid", 0) == 0) continue;
         Vec f = parseCsvInts(line, where);
         if (f.size() < 3) throw std::runtime_error(where + ": expected pid,run_tick,r0[,r1...]");
         ScriptedRequest r{f[0], f[1], Vec(f.begin() + 2, f.end())};
@@ -173,5 +179,7 @@ std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path) {
             throw std::runtime_error(where + ": all requests need the same number of resources");
         out.push_back(r);
     }
+    if (total && !total->empty() && !out.empty() && total->size() != out[0].req.size())
+        throw std::runtime_error(path + ": total= has a different number of resources than the requests");
     return out;
 }

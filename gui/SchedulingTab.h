@@ -5,9 +5,10 @@
 #include <optional>
 #include <vector>
 #include "scheduler.h"
+#include "integrated.h"
 
 class QTableWidget; class QComboBox; class QSpinBox; class QPushButton; class QSlider;
-class QLabel; class QTabWidget; class GanttWidget; class BarChartWidget; class EngineBridge;
+class QLabel; class QTabWidget; class QLineEdit; class QCheckBox; class GanttWidget; class BarChartWidget; class EngineBridge;
 
 class SchedulingTab : public QWidget {
     Q_OBJECT
@@ -28,16 +29,22 @@ public:
     bool compareAll();
     void stopAnimation();
     bool animationRunning() const;
+    // Integrated run (scheduling + paging + resources); avoidance = Banker's on/off.
+    bool runIntegrated();
+    void setIntegratedOptions(const QString& requestsFile, bool avoidance, bool autoRecover, int frames, int k);
 
     const std::optional<SchedResult>& lastResult() const { return last_; }
     const std::vector<SchedResult>& lastComparison() const { return compare_; }
     const std::vector<PCB>& lastProcesses() const { return lastProcs_; }
+    const std::optional<IntegratedResult>& lastIntegrated() const { return integ_; }
     EngineBridge* bridge() const { return bridge_; }
 
 signals:
     void logMessage(const QString& line);    // goes to the shared log dock
     void processesChanged();                 // table edited / loaded
     void animationFinished();
+    // Emitted when an integrated run hit a deadlock: the state for the Deadlock tab.
+    void integratedDeadlock(const std::vector<int>& rowPids, const DeadlockSnapshot& snap);
 
 private slots:
     void addRow();
@@ -69,9 +76,19 @@ private:
     QTableWidget* compareTable_;
     BarChartWidget* chart_;
     EngineBridge* bridge_;
+    // integrated-run controls
+    QLineEdit* reqFileEdit_;
+    QLineEdit* totalEdit_;
+    QSpinBox* intFramesSpin_;
+    QComboBox* intPageCombo_;
+    QCheckBox* avoidCheck_;
+    QCheckBox* recoverCheck_;
+    QSpinBox* detectSpin_;
+    QPushButton* intRunBtn_;
 
     std::optional<SchedResult> last_;
     std::vector<SchedResult> compare_;
     std::vector<PCB> lastProcs_;
+    std::optional<IntegratedResult> integ_;
     bool paused_ = false;
 };

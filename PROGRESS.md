@@ -12,7 +12,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 6 | GUI: Scheduling tab | DONE |
 | 7 | GUI: Memory tab | DONE |
 | 8 | GUI: Deadlock tab + RAG | DONE |
-| 9 | Integration + export | todo |
+| 9 | Integration + export | DONE |
 | 10 | Polish, docs, final verification | todo |
 
 ## Environment
@@ -98,6 +98,29 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   P1..P4 deadlocked, recovery clears it, and warnings for bad input.
 - Note: after recovery a cycle P2 -> C -> P2 is still drawn red although there is no deadlock; this is
   intended (multi-instance resources: a cycle is necessary, not sufficient).
+
+## Stage 9: Integration and export
+- Built: `core/integrated.*` (`runIntegrated`, pure/deterministic, in core/ per the golden rule): one tick loop
+  that uses `schedulerPick()` (all 6 algorithms, Waiting processes skipped), one shared `FramePool`
+  (keys pid*1000+page, per-process reference strings from `std::mt19937(pid)` with 70% locality),
+  scripted requests (`bankersRequest` when avoidance is ON, "grant if available" when OFF; denied -> Waiting,
+  retried every tick), detection every K ticks over the blocked requests, `recoverByTermination` when
+  auto-recover is on. Max claim of a process = sum of its scripted requests; totals come from
+  `# total=1 1 2` in `requests_integrated.csv` (or the GUI field).
+- `samples/requests_integrated.csv` (for `processes_srtf.csv`, RR q=2): avoidance ON -> P2's request for B is
+  refused (unsafe), no deadlock; avoidance OFF -> P1 holds A wants B, P2 holds B wants A -> deadlock detected
+  at t=9, P1 killed, everything else finishes.
+- GUI: "Integrated run" page in the Scheduling tab (requests file, totals, frames, page algorithm, avoidance,
+  auto-recover, detection interval); results + Gantt + log; the state at the first deadlock is copied to the
+  Deadlock tab with the same pids (P1..P4); Deadlock tab button "Use Scheduling tab pids" (shared process list).
+  File > Export report... writes `<name>.txt` and `<name>.csv` (CSV sections start with `## `).
+- Tests: `tests/test_integrated.cpp` (44 checks). ctest now has 5 tests.
+- Sanitizers: whole GUI built with `-DSANITIZE=address` (address+undefined): ctest 5/5 and `--selftest` exit 0,
+  no reports. TSAN build of all tests: 5/5.
+- Limitation: in the integrated run, "Optimal" uses each process's own future references (the global future
+  depends on the schedule, which is not known in advance).
+- The integrated run is computed by core/ (not replayed by the thread engine), because killed/blocked processes
+  do not fit the engine's "replay a finished timeline" model.
 
 ## Not done
 (nothing dropped yet)

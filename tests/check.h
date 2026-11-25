@@ -4,6 +4,7 @@
 #pragma once
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 
 static int g_checks = 0, g_failures = 0;

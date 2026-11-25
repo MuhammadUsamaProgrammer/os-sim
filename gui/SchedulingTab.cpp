@@ -1,8 +1,11 @@
 // SchedulingTab.cpp - GUI for CPU scheduling. All algorithm work is done by core/
 // (runScheduler / runAll); this class only collects input and displays results.
 #include "SchedulingTab.h"
+#include <QCheckBox>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QFileDialog>
+#include <QRegularExpression>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -74,12 +77,60 @@ SchedulingTab::SchedulingTab(QWidget* parent) : QWidget(parent) {
     g->addWidget(pauseBtn_, 3, 0); g->addWidget(stepBtn_, 3, 1); g->addWidget(stopBtn_, 3, 2);
     g->addWidget(new QLabel("Speed:"), 4, 0); g->addWidget(speedSlider_, 4, 1); g->addWidget(speedLabel_, 4, 2);
 
+    // ---- left: integrated run (scheduling + memory + resources) ----
+    auto* intBox = new QWidget;
+    reqFileEdit_ = new QLineEdit(ui::samplesDir() + "/requests_integrated.csv");
+    auto* browseBtn = new QPushButton("...");
+    browseBtn->setMaximumWidth(30);
+    totalEdit_ = new QLineEdit("1 1 2");
+    totalEdit_->setToolTip("Total instances of each resource type (filled from '# total=' in the file)");
+    intFramesSpin_ = new QSpinBox;
+    intFramesSpin_->setRange(1, 64);
+    intFramesSpin_->setValue(6);
+    intPageCombo_ = new QComboBox;
+    intPageCombo_->addItems({"FIFO", "LRU", "Optimal"});
+    intPageCombo_->setCurrentIndex(1);
+    avoidCheck_ = new QCheckBox("Deadlock avoidance (Banker's)");
+    avoidCheck_->setChecked(true);
+    recoverCheck_ = new QCheckBox("Auto-recover");
+    recoverCheck_->setChecked(true);
+    detectSpin_ = new QSpinBox;
+    detectSpin_->setRange(1, 100);
+    detectSpin_->setValue(5);
+    intRunBtn_ = new QPushButton("Run integrated");
+    auto* ig = new QGridLayout(intBox);
+    ig->setSpacing(8);
+    ig->addWidget(new QLabel("Requests:"), 0, 0);
+    auto* fileRow = new QHBoxLayout;
+    fileRow->addWidget(reqFileEdit_); fileRow->addWidget(browseBtn);
+    ig->addLayout(fileRow, 0, 1, 1, 3);
+    ig->addWidget(new QLabel("Total res.:"), 1, 0); ig->addWidget(totalEdit_, 1, 1);
+    ig->addWidget(new QLabel("Detect every"), 1, 2); ig->addWidget(detectSpin_, 1, 3);
+    ig->addWidget(new QLabel("Frames:"), 2, 0); ig->addWidget(intFramesSpin_, 2, 1);
+    ig->addWidget(new QLabel("Paging:"), 2, 2); ig->addWidget(intPageCombo_, 2, 3);
+    ig->addWidget(avoidCheck_, 3, 0, 1, 3); ig->addWidget(recoverCheck_, 3, 3);
+    ig->addWidget(new QLabel("<i>Uses the algorithm and quantum of the Scheduler page.</i>"), 4, 0, 1, 4);
+    ig->addWidget(intRunBtn_, 5, 0, 1, 4);
+
+    auto* leftTabs = new QTabWidget;
+    leftTabs->addTab(algoBox, "Scheduler");
+    leftTabs->addTab(intBox, "Integrated run");
+    algoBox->setTitle("");
+    algoBox->setFlat(true);
+
     auto* left = new QWidget;
     auto* leftLay = new QVBoxLayout(left);
     leftLay->setContentsMargins(0, 0, 0, 0);
     leftLay->setSpacing(8);
     leftLay->addWidget(procBox, 1);
-    leftLay->addWidget(algoBox);
+    leftLay->addWidget(leftTabs);
+
+    connect(intRunBtn_, &QPushButton::clicked, this, [this] { runIntegrated(); });
+    connect(browseBtn, &QPushButton::clicked, this, [this] {
+        QString f = QFileDialog::getOpenFileName(this, "Scripted requests", ui::samplesDir(), "CSV files (*.csv)");
+        if (!f.isEmpty()) setIntegratedOptions(f, avoidCheck_->isChecked(), recoverCheck_->isChecked(),
+                                               intFramesSpin_->value(), detectSpin_->value());
+    });
 
     // ---- right: Gantt chart (scrollable) ----
     auto* ganttBox = new QGroupBox("Gantt chart");
@@ -376,6 +427,7 @@ void SchedulingTab::setAnimControls(bool running) {
     stopBtn_->setEnabled(running);
     runBtn_->setEnabled(!running);
     compareBtn_->setEnabled(!running);
+    intRunBtn_->setEnabled(!running);
 }
 
 // Shows each process's state and remaining time from a thread-safe engine snapshot.
@@ -461,5 +513,94 @@ bool SchedulingTab::compareAll() {
                     {QColor("#4e79a7"), QColor("#f28e2b"), QColor("#59a14f")});
     outTabs_->setCurrentIndex(2);
     emit logMessage(QString("Compared %1 algorithms on %2 processes").arg(compare_.size()).arg(procs.size()));
+    return true;
+}
+
+// Sets the integrated-run inputs; reads "# total=" from the requests file if present.
+void SchedulingTab::setIntegratedOptions(const QString& requestsFile, bool avoidance, bool autoRecover,
+                                         int frames, int k) {
+    reqFileEdit_->setText(requestsFile);
+    avoidCheck_->setChecked(avoidance);
+    recoverCheck_->setChecked(autoRecover);
+    intFramesSpin_->setValue(frames);
+    detectSpin_->setValue(k);
+    try {
+        Vec total;
+        loadRequestsCsv(requestsFile.toStdString(), &total);
+        if (!total.empty()) totalEdit_->setText(QString::fromStdString(vecToString(total)));
+    } catch (const std::exception&) {}                         // reported when the run starts
+}
+
+// Integrated run: core/ simulates scheduling + paging + resources tick by tick.
+bool SchedulingTab::runIntegrated() {
+    std::vector<PCB> procs;
+    if (!readProcesses(procs)) return false;
+    stopAnimation();
+    IntegratedConfig cfg;
+    cfg.algo = currentAlgo();
+    cfg.quantum = quantumSpin_->value();
+    cfg.numFrames = intFramesSpin_->value();
+    cfg.pageAlgo = (PageAlgo)intPageCombo_->currentIndex();
+    cfg.avoidance = avoidCheck_->isChecked();
+    cfg.autoRecover = recoverCheck_->isChecked();
+    cfg.detectInterval = detectSpin_->value();
+    try {
+        Vec fileTotal;
+        cfg.requests = loadRequestsCsv(reqFileEdit_->text().toStdString(), &fileTotal);
+        for (const QString& p : totalEdit_->text().simplified().split(QRegularExpression("[ ,]+"), Qt::SkipEmptyParts)) {
+            bool ok = false;
+            int v = p.toInt(&ok);
+            if (!ok || v < 0) throw std::invalid_argument("total resources: enter whole numbers >= 0, e.g. 1 1 2");
+            cfg.totalRes.push_back(v);
+        }
+        if (cfg.totalRes.empty()) cfg.totalRes = fileTotal;
+        if (cfg.totalRes.empty() && !cfg.requests.empty()) throw std::invalid_argument("enter the total resources");
+        if (cfg.requests.empty()) cfg.totalRes.clear();
+        integ_ = ::runIntegrated(procs, cfg);
+    } catch (const std::exception& e) {
+        ui::warn(this, QString("Integrated run: %1").arg(e.what()));
+        return false;
+    }
+    lastProcs_ = procs;
+    const IntegratedResult& r = *integ_;
+    emit logMessage(QString("---- Integrated run: %1%2, %3 frames %4, avoidance %5, detect every %6 ticks ----")
+                        .arg(algoName(cfg.algo)).arg(cfg.algo == Algo::RR ? QString(" q=%1").arg(cfg.quantum) : "")
+                        .arg(cfg.numFrames).arg(pageAlgoName(cfg.pageAlgo))
+                        .arg(cfg.avoidance ? "ON" : "OFF").arg(cfg.detectInterval));
+    for (const std::string& l : r.log) emit logMessage(QString::fromStdString(l));
+
+    gantt_->setTitle(QString("Integrated run (%1)").arg(algoName(cfg.algo)));
+    gantt_->setTimeline(r.timeline);
+    // Results table: killed processes are marked
+    resultTable_->setRowCount(0);
+    for (const ProcMetrics& m : r.metrics) {
+        int row = resultTable_->rowCount();
+        resultTable_->insertRow(row);
+        bool killed = std::find(r.killedPids.begin(), r.killedPids.end(), m.pid) != r.killedPids.end();
+        QStringList v = {QString("P%1").arg(m.pid), QString::number(m.arrival), QString::number(m.burst),
+                         killed ? QString("killed @%1").arg(m.completion) : QString::number(m.completion),
+                         killed ? "-" : QString::number(m.waiting), killed ? "-" : QString::number(m.turnaround),
+                         QString::number(m.response)};
+        for (int c = 0; c < 7; ++c) resultTable_->setItem(row, c, ui::roItem(v[c]));
+        resultTable_->item(row, 0)->setBackground(killed ? ui::lightRed() : ui::pidColor(m.pid).lighter(150));
+    }
+    summaryLabel_->setText(QString("<b>Integrated</b> &nbsp; avg WT = %1 &nbsp; avg TAT = %2 (completed processes) "
+                                   "&nbsp;|&nbsp; memory: %3 faults, %4 hits, hit ratio %5 &nbsp;|&nbsp; requests: "
+                                   "%6 granted, %7 denied &nbsp;|&nbsp; <span style='color:%8'>deadlocks detected: %9%10</span>")
+                               .arg(r.avgWaiting, 0, 'f', 2).arg(r.avgTurnaround, 0, 'f', 2)
+                               .arg(r.memFaults).arg(r.memHits).arg(r.hitRatio, 0, 'f', 3)
+                               .arg(r.requestsGranted).arg(r.requestsDenied)
+                               .arg(r.deadlocksDetected ? ui::faultColor().name() : ui::hitColor().darker(130).name())
+                               .arg(r.deadlocksDetected)
+                               .arg(r.killedPids.empty() ? QString() : QString(", killed: P%1").arg([&] {
+                                   QStringList l; for (int p : r.killedPids) l << QString::number(p);
+                                   return l.join(", P"); }())));
+    summaryLabel_->setWordWrap(true);
+    outTabs_->setCurrentIndex(0);
+    if (r.firstDeadlock.tick >= 0) {
+        std::vector<int> pids;
+        for (const PCB& p : procs) pids.push_back(p.pid);
+        emit integratedDeadlock(pids, r.firstDeadlock);
+    }
     return true;
 }

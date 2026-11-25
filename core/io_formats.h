@@ -25,5 +25,6 @@ MatrixData loadMatrixFile(const std::string& path);
 
 // One scripted request: when process pid has executed runTick ticks it asks for req.
 struct ScriptedRequest { int pid; int runTick; Vec req; };
-// CSV: "pid,run_tick,r0,r1,..." (header optional).
-std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path);
+// CSV: "pid,run_tick,r0,r1,..." (header optional). An optional comment line
+// "# total=1 1 2" gives the total instances of each resource type (stored in *total).
+std::vector<ScriptedRequest> loadRequestsCsv(const std::string& path, Vec* total = nullptr);

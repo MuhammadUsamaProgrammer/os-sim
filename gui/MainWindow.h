@@ -14,6 +14,8 @@ public:
     bool loadSample(const QString& path);
     // --selftest: exercises every tab and action without a display. Returns the exit code.
     int runSelfTest();
+    // Writes <base>.txt and <base>.csv with every section. Returns false and sets *err on failure.
+    bool writeReport(const QString& base, QString* err);
 
 public slots:
     void appendLog(const QString& line);

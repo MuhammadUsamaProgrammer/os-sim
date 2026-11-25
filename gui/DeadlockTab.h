@@ -21,6 +21,10 @@ public:
     // Uses the Scheduling tab's pids as row labels (shared process list).
     void useProcessPids(const std::vector<PCB>& procs);
     void setCell(const QString& table, int row, int col, int value);   // for the self-test
+    // Shows a state taken from the integrated run (rows labelled with the real pids).
+    void loadState(const std::vector<int>& rowPids, const Matrix& alloc, const Matrix& max,
+                   const Matrix& request, const Vec& avail, const QString& title);
+    QString csvSection() const;                     // "## Deadlock" block of the CSV report
 
     bool checkSafety();
     bool requestResources(int row, const QString& requestText);
@@ -38,6 +42,7 @@ public:
 signals:
     void logMessage(const QString& line);
     void recoveryFinished();
+    void wantProcessPids();                         // "Use Scheduling tab pids" pressed
 
 private slots:
     void onSizeChanged();
