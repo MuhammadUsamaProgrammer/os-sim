@@ -1,0 +1,30 @@
+# OS-Sim top-level build file
+cmake_minimum_required(VERSION 3.16)
+project(OSSim VERSION 1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Debug)
+endif()
+add_compile_options(-Wall -Wextra)
+
+# -DSANITIZE=thread   or   -DSANITIZE=address   (address also enables undefined)
+set(SANITIZE "" CACHE STRING "Sanitizer to enable: thread | address")
+if(SANITIZE STREQUAL "thread")
+  add_compile_options(-fsanitize=thread -g -O1)
+  add_link_options(-fsanitize=thread)
+elseif(SANITIZE STREQUAL "address")
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+find_package(Threads REQUIRED)
+enable_testing()
+
+add_subdirectory(core)
+add_subdirectory(engine)
+add_subdirectory(apps)
+add_subdirectory(tests)
+add_subdirectory(gui)

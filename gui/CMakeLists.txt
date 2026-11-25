@@ -1,0 +1,13 @@
+# Qt GUI is optional: core/engine/tests still build without Qt.
+find_package(Qt6 COMPONENTS Widgets Charts)
+if(Qt6_FOUND AND Qt6Widgets_FOUND)
+  set(CMAKE_AUTOMOC ON)
+  add_executable(ossim main.cpp)
+  target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
+  if(Qt6Charts_FOUND)
+    target_link_libraries(ossim PRIVATE Qt6::Charts)
+    target_compile_definitions(ossim PRIVATE OSSIM_HAVE_QTCHARTS=1)
+  endif()
+else()
+  message(WARNING "Qt6 Widgets not found: GUI (ossim) will not be built")
+endif()
