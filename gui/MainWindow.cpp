@@ -30,6 +30,7 @@
 #include "DiskTab.h"
 #include "ProcessTab.h"
 #include "IoTab.h"
+#include "MemAdvTab.h"
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
@@ -48,7 +49,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     proc_ = new ProcessTab;
     io_ = new IoTab;
     tabs_->addTab(sched_, "Scheduling");
-    tabs_->addTab(mem_, "Memory");
+    memArea_ = new MemAdvArea(mem_);              // page replacement + Phase 2 memory sub-tabs
+    tabs_->addTab(memArea_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
     tabs_->insertTab(1, proc_, "Processes");
@@ -74,6 +76,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(disk_, &DiskTab::logMessage, this, &MainWindow::appendLog);
     connect(proc_, &ProcessTab::logMessage, this, &MainWindow::appendLog);
     connect(io_, &IoTab::logMessage, this, &MainWindow::appendLog);
+    connect(memArea_, &MemAdvArea::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -100,6 +103,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() = default;
+
+// Selects the Memory area and its "Page replacement" sub-tab (the original Memory tab).
+void MainWindow::showMemoryTab() {
+    tabs_->setCurrentWidget(memArea_);
+    memArea_->setCurrentWidget(mem_);
+}
 
 void MainWindow::buildMenus() {
     QMenu* file = menuBar()->addMenu("&File");
@@ -151,7 +160,7 @@ bool MainWindow::loadSample(const QString& path) {
         tabs_->setCurrentWidget(sched_);
     } else if (name.startsWith("refstring_")) {
         ok = mem_->loadRefFile(path);
-        tabs_->setCurrentWidget(mem_);
+        showMemoryTab();
     } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
         ok = dead_->loadFile(path);
         tabs_->setCurrentWidget(dead_);
@@ -328,7 +337,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 10. I/O management
     T << "\n=== I/O management ===\n" << io_->reportText();
     C << "\n" << io_->csvSection();
-    // 11. Event log
+    // 11. Advanced memory
+    T << "\n=== Advanced memory ===\n" << memArea_->reportText();
+    C << "\n" << memArea_->csvSection();
+    // 12. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -460,7 +472,7 @@ int MainWindow::runSelfTest() {
     loadSample(sd + "/processes_srtf.csv");
     mem_->refreshPids();
     stCheck(true, "page table panel refresh");
-    tabs_->setCurrentWidget(mem_);
+    showMemoryTab();
     shot(this, "memory_pagetable");
 
     // Deadlock: Banker's sample, request, detection sample, RAG, recovery, bad input
@@ -710,6 +722,45 @@ int MainWindow::runSelfTest() {
             "io: bulk transfer, DMA leaves more useful CPU work than interrupts");
     shot(this, "io_bulk_dma");
 
+    // ---- Phase 2, M4: Advanced memory
+    tabs_->setCurrentWidget(memArea_);
+    memArea_->setCurrentIndex(1);
+    stCheck(memArea_->loadAllocPreset(0) && memArea_->allocResults().size() == 3, "memory: allocation preset");
+    {
+        const auto& a = memArea_->allocResults();
+        stCheck(!a[0].steps[3].ok && a[1].steps[3].ok && !a[2].steps[3].ok,
+                "memory: 426 fails with First and Worst Fit, fits with Best Fit");
+        stCheck(a[0].steps[3].externalFragFailure, "memory: First Fit failure is external fragmentation");
+    }
+    for (int i = 0; i < 4; ++i) memArea_->allocBar()->next();
+    shot(this, "memory_allocation");
+    for (int p = 1; p < 4; ++p) stCheck(memArea_->loadAllocPreset(p), QString("memory allocation preset %1").arg(p + 1));
+    memArea_->setCurrentIndex(2);
+    stCheck(memArea_->loadPagingPreset(0) && memArea_->pagingResult()->ok() && memArea_->pagingResult()->page == 2 &&
+            memArea_->pagingResult()->offset == 452 && memArea_->pagingResult()->physical == 5572, "paging: 2500 -> page 2, offset 452, physical 5572");
+    memArea_->pagingBar()->setPosition(memArea_->pagingBar()->length());
+    shot(this, "memory_paging");
+    stCheck(memArea_->loadPagingPreset(4) && memArea_->pagingResult()->outcome == XlateOutcome::PageFault, "paging: non-resident page -> page fault");
+    stCheck(memArea_->loadPagingPreset(6) && memArea_->pagingResult()->outcome == XlateOutcome::OutOfRange, "paging: out of range");
+    stCheck(memArea_->loadPagingPreset(7) && memArea_->pagingResult()->outcome == XlateOutcome::Protection, "paging: write to read-only page");
+    memArea_->setCurrentIndex(3);
+    stCheck(memArea_->loadSegPreset(0) && memArea_->segResult()->physical == 4250, "segmentation: (2, 250) -> 4250");
+    stCheck(memArea_->loadSegPreset(1) && memArea_->segResult()->outcome == XlateOutcome::Protection, "segmentation: offset 600 -> protection fault");
+    memArea_->setCurrentIndex(4);
+    stCheck(memArea_->loadDemandPreset(0) && memArea_->demandResults().size() == 3 && memArea_->demandResults()[0].faults == 10 &&
+            memArea_->demandResults()[1].faults == 9 && memArea_->demandResults()[2].faults == 7, "demand paging: FIFO 10, LRU 9, Optimal 7");
+    for (int i = 0; i < 8; ++i) memArea_->demandBar()->next();
+    shot(this, "memory_demand_paging");
+    stCheck(memArea_->loadDemandPreset(1) && memArea_->demandResults()[0].writeBacks > 0, "demand paging: dirty write-backs");
+    memArea_->setCurrentIndex(5);
+    stCheck(memArea_->rebuildSwap() && memArea_->swapResult() && memArea_->swapResult()->swapOuts > 0, "swapping: whole-process swap-outs");
+    memArea_->setCurrentIndex(6);
+    stCheck(memArea_->loadThrashPreset(0) && memArea_->thrashA()->faults == 20 && memArea_->thrashB()->faults == 4,
+            "thrashing: cyclic 0-3 x5, LRU 3 frames -> 20 faults, 4 frames -> 4");
+    shot(this, "memory_thrashing");
+    showMemoryTab();
+    stCheck(mem_->isVisible(), "memory: page-replacement sub-tab still available");
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -727,10 +778,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");

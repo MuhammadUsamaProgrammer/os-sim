@@ -242,6 +242,11 @@ void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* c
     if (center) sizes << 640;
     if (inspector) sizes << 300;
     top->setSizes(sizes);
+    if (!bottom) {                          // no bottom pages: the playback bar sits right below
+        lay->addWidget(top, 1);
+        if (bar) lay->addWidget(bar);
+        return;
+    }
     auto* vsplit = new QSplitter(Qt::Vertical);
     vsplit->addWidget(top);
     if (bar || bottom) {
