@@ -96,6 +96,7 @@ class ModuleHeader : public QWidget {
 public:
     ModuleHeader(const QString& title, const QString& explanation, QWidget* parent = nullptr);
     void setMode(bool liveLinux);            // badge: "Simulation" or "Live Linux Demo"
+    void setBadge(const QString& text, const QColor& color);   // any other badge (e.g. "Live System")
     void setStatus(const QString& text, const QColor& color = QColor());
     QString status() const;
     QString title() const { return title_; }

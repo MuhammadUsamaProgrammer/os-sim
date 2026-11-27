@@ -40,6 +40,7 @@
 #include "ThreadsTab.h"
 #include "StorageTab.h"
 #include "HeapLab.h"
+#include "SysMonTab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -71,7 +72,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     tabs_->addTab(new PageScroll(memArea_), "Memory");
     tabs_->addTab(new PageScroll(dead_), "Deadlock");
     tabs_->addTab(new PageScroll(sync_), "Synchronization");
-    tabs_->insertTab(1, new PageScroll(proc_), "Processes");
+    procArea_ = new QTabWidget;                   // Processes: lifecycle simulation + Phase 3 child views
+    procArea_->addTab(proc_, "Process Lifecycle");
+    sysmon_ = new SystemMonitorPage;
+    procArea_->addTab(sysmon_, "System Monitor");
+    tabs_->insertTab(1, new PageScroll(procArea_), "Processes");
     tabs_->addTab(new PageScroll(threads_), "Threads");
     tabs_->addTab(new PageScroll(ipc_), "IPC");
     tabs_->addTab(new PageScroll(io_), "I/O");
@@ -105,6 +110,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(ipc_, &IpcTab::logMessage, this, &MainWindow::appendLog);
     connect(threads_, &ThreadsTab::logMessage, this, &MainWindow::appendLog);
     connect(storage_, &StorageArea::logMessage, this, &MainWindow::appendLog);
+    connect(sysmon_, &SystemMonitorPage::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -1032,6 +1038,53 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3: Processes > System Monitor (live, sampled on a worker thread)
+    {
+        SystemMonitorPage* sm = sysmon_;
+        sm->setIntervalMs(250);
+        showTab(sm);                                   // showing the page starts monitoring
+        stCheck(waitFor([&] { return sm->snapshots() >= 3; }, 8000), "system monitor: samples arrive asynchronously from the worker thread");
+        const SystemSnapshot& s = sm->last();
+#ifdef __linux__
+        stCheck(!s.warmingUp && s.memValid && s.processCount > 0 && s.cpuValid, "system monitor (Linux /proc): CPU and memory valid after warm-up");
+#endif
+        sm->setFilter(QString::number(QCoreApplication::applicationPid()));
+        stCheck(sm->visibleRows() == 1, "system monitor: filter by PID shows OS-Sim itself");
+        sm->setFilter(QString());
+        sm->setHistoryCapacity(10);
+        waitFor([&] { return sm->snapshots() >= 14; }, 8000);
+        stCheck(sm->historySize() <= 10 && sm->historySize() >= 3, QString("system monitor: history is bounded (%1 of 10)").arg(sm->historySize()));
+        sm->pauseMonitoring();
+        QApplication::processEvents();
+        long n = sm->snapshots();
+        waitFor([] { return false; }, 700);
+        stCheck(!sm->monitoring() && sm->snapshots() <= n + 1, "system monitor: pause stops sampling");
+        if (NativeRunner::available()) {
+            stCheck(sm->startWorker(20, 8, 30), "system monitor: start the owned demo worker");
+            qint64 wp = sm->workerPid();
+            auto stateOf = [&]() -> std::string {
+                for (const ProcView& p : sm->last().procs) if (p.pid == wp) return p.state;
+                return "";
+            };
+            auto resample = [&](const std::string& want, bool equal) {
+                return waitFor([&] { sm->sampleOnce(); return equal ? stateOf() == want : (!stateOf().empty() && stateOf() != want); }, 5000);
+            };
+            stCheck(resample("", false), "system monitor: the demo worker appears in the live process table");
+            stCheck(sm->suspendWorker() && resample("stopped", true), "system monitor: SIGSTOP to the own worker -> state 'stopped'");
+            stCheck(sm->resumeWorker() && resample("stopped", false), "system monitor: SIGCONT -> running again");
+            stCheck(!sm->killWorker(false) && sm->workerRunning(), "system monitor: force kill without confirmation does nothing");
+            stCheck(sm->stopWorker() && waitFor([&] { return !sm->workerRunning(); }, 5000), "system monitor: cooperative stop (SIGTERM) ends the worker");
+            stCheck(sm->startWorker(20, 0, 5) && sm->killWorker(true) && waitFor([&] { return !sm->workerRunning(); }, 5000),
+                    "system monitor: confirmed force kill of the own worker");
+        }
+        sm->startMonitoring();
+        waitFor([&] { return sm->snapshots() >= n + 3; }, 5000);
+        shot(this, "sysmon");
+        sm->stopMonitoring();
+        stCheck(sm->historySize() == 0 && !sm->monitoring(), "system monitor: stop clears the history");
+        sm->setIntervalMs(1000);
+    }
+
     // ---- Phase 3: Memory > Heap Laboratory (bounded arena allocator)
     {
         HeapLabPage* hl = memArea_->heapLab();
@@ -1170,7 +1223,7 @@ int MainWindow::runSelfTest() {
                                 {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
                                 {io_, -1, "I/O"}, {disk_, -1, "Disk"},
-                                {memArea_->heapLab(), -1, "Memory > Heap Laboratory"},
+                                {memArea_->heapLab(), -1, "Memory > Heap Laboratory"}, {sysmon_, -1, "Processes > System Monitor"},
                                 {storage_->explorer(), -1, "Storage > File Explorer"}, {storage_->access(), -1, "Storage > Access Control"},
                                 {storage_->blocks(), -1, "Storage > Block Allocation"}, {storage_->recovery(), -1, "Storage > Recovery Lab"}};
         for (const T& t : pages) {

@@ -225,6 +225,11 @@ void ModuleHeader::setMode(bool live) {
                               .arg(c.name()));
 }
 
+void ModuleHeader::setBadge(const QString& text, const QColor& c) {
+    badge_->setText(text);
+    badge_->setStyleSheet(QString("background:%1; color:white; border-radius:4px; padding:1px 6px; font-weight:bold;").arg(c.name()));
+}
+
 void ModuleHeader::setStatus(const QString& text, const QColor& color) {
     status_->setText(text);
     status_->setStyleSheet(color.isValid() ? QString("color:%1").arg(color.name()) : QString());

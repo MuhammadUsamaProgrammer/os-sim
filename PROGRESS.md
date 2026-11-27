@@ -278,6 +278,22 @@ Done together because the Recovery Lab works on the same model (dependency, not 
   integrity check, outstanding allocations = potential leaks).
 - Tests: `test_heap` (107 checks); self-test: 10 heap checks + drag/resize on the page.
 
+### Stage 4: Processes > System Monitor (done; Linux verified, Windows NOT verified)
+- `core/sysmon.*` (pure): /proc/stat, /proc/meminfo, /proc/<pid>/stat (names with spaces / ')'), /proc/<pid>/status,
+  /proc/diskstats parsers; timestamped deltas (total and per-core CPU %, process CPU % of ONE core, disk rates) with
+  zero-interval and counter-reset handling; PID reuse detected by pid + start time; bounded MetricHistory;
+  AlertMonitor with threshold, debounce and hysteresis.
+- `engine/sysmon_native.*`: Linux /proc backend (no command lines); Windows backend (GetSystemTimes,
+  GlobalMemoryStatusEx, Toolhelp32, GetProcessTimes, GetProcessMemoryInfo; psapi linked only on WIN32) - compiled only
+  on Windows and NOT verified (no Windows machine available); other platforms report "unsupported".
+- GUI: Processes became a sub-tab area (Process Lifecycle = the existing page, System Monitor). Sampling on a worker
+  QThread, snapshots via queued signals; summary strip, history chart, per-core bars, sortable/filterable table,
+  process tree, inspector with CPU/RSS explanations, alert log; sampling pauses while the page is hidden.
+  Owned demo worker (`ossim_helper worker`): start, SIGSTOP/SIGCONT (POSIX), cooperative SIGTERM, confirmed kill;
+  signals go only to the QProcess-owned child that is still running. Host processes are read-only.
+- Tests: `test_sysmon` (59 checks: fixtures + Linux smoke test); self-test: 13 checks incl. suspend/resume/stop of the
+  owned worker. Export contains no live process details.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
