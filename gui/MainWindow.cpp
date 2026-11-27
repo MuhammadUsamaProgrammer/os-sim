@@ -28,6 +28,8 @@
 #include "Style.h"
 #include "SyncTab.h"
 #include "DiskTab.h"
+#include "ProcessTab.h"
+#include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
 
@@ -42,10 +44,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dead_ = new DeadlockTab;
     sync_ = new SyncTab;
     disk_ = new DiskTab;
+    proc_ = new ProcessTab;
     tabs_->addTab(sched_, "Scheduling");
     tabs_->addTab(mem_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
+    tabs_->insertTab(1, proc_, "Processes");
     tabs_->addTab(disk_, "Disk");
     setCentralWidget(tabs_);
 
@@ -65,6 +69,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(dead_, &DeadlockTab::logMessage, this, &MainWindow::appendLog);
     connect(sync_, &SyncTab::logMessage, this, &MainWindow::appendLog);
     connect(disk_, &DiskTab::logMessage, this, &MainWindow::appendLog);
+    connect(proc_, &ProcessTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -146,6 +151,9 @@ bool MainWindow::loadSample(const QString& path) {
     } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
         ok = dead_->loadFile(path);
         tabs_->setCurrentWidget(dead_);
+    } else if (name.startsWith("lifecycle_")) {
+        ok = proc_->loadFile(path);
+        tabs_->setCurrentWidget(proc_);
     } else if (name.startsWith("disk_")) {
         ok = disk_->loadFile(path);
         tabs_->setCurrentWidget(disk_);
@@ -310,7 +318,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 8. Disk scheduling
     T << "\n=== Disk scheduling ===\n" << disk_->reportText();
     C << "\n" << disk_->csvSection();
-    // 9. Event log
+    // 9. Process lifecycle
+    T << "\n=== Process lifecycle ===\n" << proc_->reportText();
+    C << "\n" << proc_->csvSection();
+    // 10. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -618,6 +629,48 @@ int MainWindow::runSelfTest() {
     disk_->loadPreset(0);
     shot(this, "disk_reference");
 
+    // ---- Phase 2, M2: Process management
+    tabs_->setCurrentWidget(proc_);
+    stCheck(loadSample(sd + "/lifecycle_reference.csv"), "load lifecycle_reference.csv");
+    {
+        std::vector<QString> seq;
+        for (const LcSnapshot& s : proc_->sim()->trace())
+            if (s.event != LcEvent::Execute && s.event != LcEvent::Idle) seq.push_back(QString("%1 P%2").arg(lcEventName(s.event)).arg(s.pid));
+        QStringList got(seq.begin(), seq.end());
+        stCheck(got.join(", ") == "create P2, admit P2, create P3, admit P3, dispatch P2, block on I/O P2, dispatch P3, "
+                                  "I/O complete P2, exit P3, dispatch P2, exit P2", "process: reference lifecycle sequence " + got.join(", "));
+    }
+    proc_->playback()->setPosition(8);
+    shot(this, "process_lifecycle");
+    proc_->playback()->setPosition(proc_->playback()->length());
+    stCheck(proc_->statusText().contains("all processes terminated"), "process: last step, all terminated");
+    for (int p = 0; p < 4; ++p) stCheck(proc_->loadPreset(p) && proc_->sim()->allTerminated(), QString("process preset %1 completes").arg(p + 1));
+    proc_->loadPreset(0);
+    proc_->setManual(true);
+    stCheck(proc_->command("Admit", 2) == "" && proc_->command("Admit", 3) == "" && proc_->command("Dispatch", 2) == "",
+            "process manual: admit, admit, dispatch");
+    stCheck(proc_->command("Dispatch", 3) != "", "process manual: second dispatch refused (one CPU)");
+    stCheck(proc_->command("Block I/O", 2, 2) == "" && proc_->command("Dispatch", 2) != "",
+            "process manual: block on I/O, Waiting -> Running refused");
+    int len = proc_->playback()->length();
+    proc_->playback()->prev();
+    stCheck(proc_->command("Kill", 3) == "" && proc_->playback()->length() == len,
+            "process manual: command after Prev discards the future (new branch)");
+    shot(this, "process_manual");
+    proc_->setManual(false);
+    if (NativeRunner::available()) {
+        for (const char* d : {"fork", "exec", "wait", "zombie", "orphan", "signal", "sleep"}) {
+            bool started = proc_->startDemo(d);
+            bool done = started && waitFor([&] { return !proc_->demoRunning(); }, 10000);
+            stCheck(done && proc_->demoExitCode() == 0, QString("process live demo %1 exits 0").arg(d));
+        }
+        shot(this, "process_live_demo");
+        stCheck(proc_->startDemo("sleep"), "process live demo: start sleep");
+        waitFor([] { return false; }, 200);
+        proc_->stopDemo();
+        stCheck(waitFor([&] { return !proc_->demoRunning(); }, 4000), "process live demo: Stop ends it");
+    }
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -635,10 +688,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");

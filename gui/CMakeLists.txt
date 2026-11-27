@@ -17,9 +17,13 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     SyncViews.h SyncViews.cpp
     SyncBridge.h SyncBridge.cpp
     ModuleKit.h ModuleKit.cpp
-    DiskTab.h DiskTab.cpp DiskViews.h DiskViews.cpp)
+    DiskTab.h DiskTab.cpp DiskViews.h DiskViews.cpp
+    NativeRunner.h NativeRunner.cpp
+    ProcessTab.h ProcessTab.cpp LifecycleViews.h LifecycleViews.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
-  target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                             OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")
+  add_dependencies(ossim ossim_helper)
 else()
   message(WARNING "Qt6 Widgets not found: GUI (ossim) will not be built. "
                   "Install with: sudo apt install qt6-base-dev")
