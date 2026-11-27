@@ -156,8 +156,8 @@ QTableWidget* MemoryTab::makeFrameTable(const MemResult& r) {
         for (int f = 0; f < r.numFrames; ++f) {
             auto* it = ui::roItem(s.frames[f] < 0 ? "" : QString::number(s.frames[f]));
             bool changed = s.fault && s.frames[f] == s.page;         // frame that received the page
-            if (changed) it->setBackground(ui::lightRed());          // the frame that was just loaded
-            else if (!s.fault && s.frames[f] == s.page) it->setBackground(ui::lightGreen());
+            if (changed) ui::shade(it, ui::lightRed());          // the frame that was just loaded
+            else if (!s.fault && s.frames[f] == s.page) ui::shade(it, ui::lightGreen());
             t->setItem(f, i, it);
         }
         auto* res = ui::roItem(s.fault ? "FAULT" : "HIT");
@@ -280,7 +280,7 @@ void MemoryTab::showPageTable() {
         pageTable_->setItem(i, 0, ui::roItem(QString::number(i)));
         pageTable_->setItem(i, 1, ui::roItem(e.valid ? QString::number(e.frame) : "-"));
         auto* v = ui::roItem(e.valid ? "valid" : "invalid");
-        v->setBackground(e.valid ? ui::lightGreen() : ui::lightRed());
+        ui::shade(v, e.valid ? ui::lightGreen() : ui::lightRed());
         pageTable_->setItem(i, 2, v);
     }
 }

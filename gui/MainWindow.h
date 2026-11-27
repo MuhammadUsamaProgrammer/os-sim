@@ -2,7 +2,7 @@
 #pragma once
 #include <QMainWindow>
 
-class QTabWidget; class QPlainTextEdit;
+class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton;
 class SchedulingTab; class MemoryTab; class DeadlockTab;
 
 class MainWindow : public QMainWindow {
@@ -23,6 +23,8 @@ public slots:
 private slots:
     void showAbout();
     void exportReport();
+    // Switches between the light and dark theme (and remembers the choice).
+    void setDarkTheme(bool dark);
 
 private:
     void buildMenus();
@@ -31,4 +33,6 @@ private:
     MemoryTab* mem_;
     DeadlockTab* dead_;
     QPlainTextEdit* log_;
+    QAction* darkAction_ = nullptr;     // View > Dark theme (checkable)
+    QToolButton* themeButton_ = nullptr; // switch button in the menu-bar corner
 };

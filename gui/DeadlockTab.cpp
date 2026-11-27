@@ -65,7 +65,10 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     maxT_ = makeMatrix(true);
     needT_ = makeMatrix(false);
     reqT_ = makeMatrix(true);
-    availT_ = makeMatrix(true);
+    totalT_ = makeMatrix(true);                         // total instances of each resource (input)
+    totalT_->setMinimumHeight(56);
+    totalT_->setMaximumHeight(60);
+    availT_ = makeMatrix(false);                        // read-only: Total - sum of Allocation column
     availT_->setMinimumHeight(56);
     availT_->setMaximumHeight(60);
     auto* matBox = new QGroupBox("State (rows = processes, columns = resource types)");
@@ -78,7 +81,9 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     auto* availBox = new QWidget;
     auto* al = new QVBoxLayout(availBox);
     al->setContentsMargins(0, 0, 0, 0);
-    al->addWidget(titled("Available", availT_));
+    al->setSpacing(8);
+    al->addWidget(titled("Total instances", totalT_));
+    al->addWidget(titled("Available = Total - sum(Allocation)", availT_));
     al->addStretch();
     mg->addWidget(availBox, 1, 1);
 
@@ -153,8 +158,8 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     connect(reqBtn, &QPushButton::clicked, this, [this] { requestResources(reqPid_->currentIndex(), reqEdit_->text()); });
     connect(detBtn, &QPushButton::clicked, this, [this] { detect(); });
     connect(recBtn, &QPushButton::clicked, this, [this] { recover(); });
-    for (QTableWidget* t : {allocT_, maxT_, reqT_, availT_})
-        connect(t, &QTableWidget::itemChanged, this, [this] { updateNeed(); redraw(); });
+    for (QTableWidget* t : {allocT_, maxT_, reqT_, totalT_})
+        connect(t, &QTableWidget::itemChanged, this, [this] { updateNeed(); updateAvail(); redraw(); });
 
     onSizeChanged();
 }
@@ -179,19 +184,20 @@ void DeadlockTab::onSizeChanged() {
     QStringList cols, rows;
     for (int j = 0; j < m; ++j) cols << QString(QChar('A' + j));    // resource types A, B, C ...
     for (int i = 0; i < n; ++i) rows << pidName(i);
-    for (QTableWidget* t : {allocT_, maxT_, needT_, reqT_, availT_}) {
+    for (QTableWidget* t : {allocT_, maxT_, needT_, reqT_, availT_, totalT_}) {
+        bool oneRow = (t == availT_ || t == totalT_);
         t->blockSignals(true);
-        t->setRowCount(t == availT_ ? 1 : n);
+        t->setRowCount(oneRow ? 1 : n);
         t->setColumnCount(m);
         t->setHorizontalHeaderLabels(cols);
-        if (t != availT_) t->setVerticalHeaderLabels(rows);
-        else t->setVerticalHeaderLabels({"avail"});
+        if (!oneRow) t->setVerticalHeaderLabels(rows);
+        else t->setVerticalHeaderLabels({t == availT_ ? "avail" : "total"});
         for (int i = 0; i < t->rowCount(); ++i)
             for (int j = 0; j < m; ++j)
                 if (!t->item(i, j)) {
                     auto* it = new QTableWidgetItem("0");
                     it->setTextAlignment(Qt::AlignCenter);
-                    if (t == needT_) it->setFlags(it->flags() & ~Qt::ItemIsEditable);
+                    if (t == needT_ || t == availT_) it->setFlags(it->flags() & ~Qt::ItemIsEditable);
                     t->setItem(i, j, it);
                 }
         t->blockSignals(false);
@@ -202,6 +208,7 @@ void DeadlockTab::onSizeChanged() {
     deadlocked_.clear();
     highlightRows({}, QColor());
     updateNeed();
+    updateAvail();
     redraw();
 }
 
@@ -224,7 +231,7 @@ void DeadlockTab::useProcessPids(const std::vector<PCB>& procs) {
 }
 
 void DeadlockTab::setCell(const QString& table, int row, int col, int value) {
-    QTableWidget* t = table == "alloc" ? allocT_ : table == "max" ? maxT_ : table == "request" ? reqT_ : availT_;
+    QTableWidget* t = table == "alloc" ? allocT_ : table == "max" ? maxT_ : table == "request" ? reqT_ : totalT_;
     if (t->item(row, col)) t->item(row, col)->setText(QString::number(value));
 }
 
@@ -236,7 +243,15 @@ void DeadlockTab::writeMatrix(QTableWidget* t, const Matrix& m) {
     t->blockSignals(false);
 }
 
-void DeadlockTab::writeAvail(const Vec& v) { writeMatrix(availT_, Matrix{v}); }
+void DeadlockTab::writeTotal(const Vec& v) { writeMatrix(totalT_, Matrix{v}); }
+
+// Total = Available + sum of the Allocation column (used when a state gives Available).
+static Vec totalFrom(const Matrix& alloc, const Vec& avail) {
+    Vec total = avail;
+    for (const Vec& r : alloc)
+        for (size_t j = 0; j < total.size() && j < r.size(); ++j) total[j] += r[j];
+    return total;
+}
 
 // Loads the integrated run's resource state at its first deadlock.
 void DeadlockTab::loadState(const std::vector<int>& rowPids, const Matrix& alloc, const Matrix& max,
@@ -249,14 +264,16 @@ void DeadlockTab::loadState(const std::vector<int>& rowPids, const Matrix& alloc
     writeMatrix(allocT_, alloc);
     writeMatrix(maxT_, max);
     writeMatrix(reqT_, request);
-    writeAvail(avail);
+    writeTotal(totalFrom(alloc, avail));                   // Available is then recomputed from Total
     lastSafety_.reset();
     lastDetect_.reset();
     trace_->clear();
     history_.clear();
+    updateNeed();
+    updateAvail();
     status_->setText(title);
     status_->setStyleSheet("");
-    updateNeed();
+    totalsMsg_ = false;
     redraw();
     emit logMessage("Deadlock: " + title);
 }
@@ -276,21 +293,23 @@ bool DeadlockTab::loadFile(const QString& path) {
     writeMatrix(allocT_, d.alloc);
     writeMatrix(maxT_, d.max);
     writeMatrix(reqT_, d.request.empty() ? Matrix(d.nProcs, Vec(d.nRes, 0)) : d.request);
-    writeAvail(d.available);
+    writeTotal(totalFrom(d.alloc, d.available));          // Total = sample Available + allocated
     lastSafety_.reset();
     lastDetect_.reset();
     trace_->clear();
-    status_->setText("Loaded " + QFileInfo(path).fileName());
-    status_->setStyleSheet("");
     history_.clear();
     updateNeed();
+    updateAvail();
+    status_->setText("Loaded " + QFileInfo(path).fileName());
+    status_->setStyleSheet("");
+    totalsMsg_ = false;
     redraw();
     emit logMessage("Deadlock: loaded " + path);
     return true;
 }
 
 void DeadlockTab::clearAll() {
-    for (QTableWidget* t : {allocT_, maxT_, reqT_, availT_}) {
+    for (QTableWidget* t : {allocT_, maxT_, reqT_, totalT_}) {
         int r = t->rowCount(), c = t->columnCount();
         writeMatrix(t, Matrix(r, Vec(c, 0)));
     }
@@ -298,10 +317,12 @@ void DeadlockTab::clearAll() {
     lastSafety_.reset(); lastDetect_.reset();
     trace_->clear();
     history_.clear();
-    status_->setText("Cleared.");
-    status_->setStyleSheet("");
     highlightRows({}, QColor());
     updateNeed();
+    updateAvail();
+    status_->setText("Cleared.");
+    status_->setStyleSheet("");
+    totalsMsg_ = false;
     redraw();
 }
 
@@ -322,13 +343,84 @@ static bool readTable(QWidget* parent, QTableWidget* t, const QString& name, Mat
     return true;
 }
 
+// Reads every input table and computes Available = Total - sum(Allocation).
+// Refuses (status message + warning) when a resource has more allocated than exists.
 bool DeadlockTab::readAll(Matrix& alloc, Matrix& max, Matrix& req, Vec& avail) {
-    Matrix av;
+    Matrix tot;
     if (!readTable(this, allocT_, "Allocation", alloc) || !readTable(this, maxT_, "Max", max) ||
-        !readTable(this, reqT_, "Request", req) || !readTable(this, availT_, "Available", av))
+        !readTable(this, reqT_, "Request", req) || !readTable(this, totalT_, "Total", tot))
         return false;
-    avail = av[0];
+    QString error, warning;
+    if (totalsProblem(error, warning)) {
+        status_->setText(error);
+        status_->setStyleSheet(QString("color:%1").arg(ui::faultColor().name()));
+        totalsMsg_ = true;
+        ui::warn(this, error);
+        return false;
+    }
+    avail = tot[0];
+    for (const Vec& r : alloc)
+        for (size_t j = 0; j < avail.size(); ++j) avail[j] -= r[j];
     return true;
+}
+
+// Checks the totals: error = some resource has Allocation > Total (blocks the algorithms),
+// warning = some Max value > Total (that process could never get its full claim).
+// Returns true only for an error. Bad cells are skipped here (readTable reports them).
+bool DeadlockTab::totalsProblem(QString& error, QString& warning) const {
+    auto cell = [](QTableWidget* t, int i, int j) {
+        return t->item(i, j) ? t->item(i, j)->text().trimmed().toInt() : 0;
+    };
+    QStringList over, maxOver;
+    for (int j = 0; j < totalT_->columnCount(); ++j) {
+        int total = cell(totalT_, 0, j), used = 0;
+        QString res(QChar('A' + j));
+        for (int i = 0; i < allocT_->rowCount(); ++i) used += cell(allocT_, i, j);
+        if (used > total) over << QString("%1 (allocated %2 > total %3)").arg(res).arg(used).arg(total);
+        for (int i = 0; i < maxT_->rowCount(); ++i)
+            if (cell(maxT_, i, j) > total)
+                maxOver << QString("%1 Max %2 = %3 > total %4").arg(pidName(i), res).arg(cell(maxT_, i, j)).arg(total);
+    }
+    error = over.isEmpty() ? QString()
+                           : "Allocation exceeds Total for resource " + over.join(", ") +
+                                 ". Increase Total or reduce Allocation before running an algorithm.";
+    warning = maxOver.isEmpty() ? QString() : "Warning: " + maxOver.join(", ") + " (can never be satisfied).";
+    return !error.isEmpty();
+}
+
+// Adds the "Max > Total" warning (if any) to the trace after an algorithm that uses Max.
+void DeadlockTab::addMaxWarning() {
+    QString error, warning;
+    totalsProblem(error, warning);
+    if (!warning.isEmpty()) trace_->addItem(warning);
+}
+
+// Available row = Total - sum(Allocation column), recomputed live; negative values in red.
+// Also shows (or clears) the Total/Allocation validation message in the status label.
+void DeadlockTab::updateAvail() {
+    availT_->blockSignals(true);
+    for (int j = 0; j < availT_->columnCount(); ++j) {
+        int v = totalT_->item(0, j) ? totalT_->item(0, j)->text().trimmed().toInt() : 0;
+        for (int i = 0; i < allocT_->rowCount(); ++i)
+            v -= allocT_->item(i, j) ? allocT_->item(i, j)->text().trimmed().toInt() : 0;
+        if (QTableWidgetItem* it = availT_->item(0, j)) {
+            it->setText(QString::number(v));
+            it->setForeground(v >= 0 ? palette().text().color() : ui::faultColor());
+        }
+    }
+    availT_->blockSignals(false);
+
+    QString error, warning;
+    totalsProblem(error, warning);
+    if (!error.isEmpty() || !warning.isEmpty()) {
+        status_->setText(error.isEmpty() ? warning : error + (warning.isEmpty() ? "" : "\n" + warning));
+        status_->setStyleSheet(QString("color:%1").arg(ui::faultColor().name()));
+        totalsMsg_ = true;
+    } else if (totalsMsg_) {                                // problem fixed: clear the old message
+        status_->setText("Totals OK: Available = Total - Allocation.");
+        status_->setStyleSheet("");
+        totalsMsg_ = false;
+    }
 }
 
 // Need is recomputed whenever Allocation or Max change ("!" marks Allocation > Max).
@@ -353,8 +445,12 @@ void DeadlockTab::highlightRows(const std::vector<int>& rows, const QColor& c) {
             bool on = std::find(rows.begin(), rows.end(), i) != rows.end();
             bool gone = std::find(killed_.begin(), killed_.end(), i) != killed_.end();
             for (int j = 0; j < t->columnCount(); ++j)
-                if (auto* it = t->item(i, j))
-                    it->setBackground(gone ? ui::idleColor() : on ? c : QColor(Qt::transparent));
+                if (auto* it = t->item(i, j)) {
+                    if (gone || on) { ui::shade(it, gone ? ui::idleColor() : c); continue; }
+                    it->setBackground(QColor(Qt::transparent));
+                    // back to the theme's text colour (keeps other colours, e.g. red negative Need)
+                    if (it->foreground().color() == ui::darkInk()) it->setForeground(QBrush());
+                }
         }
         t->blockSignals(false);
     }
@@ -362,15 +458,12 @@ void DeadlockTab::highlightRows(const std::vector<int>& rows, const QColor& c) {
 
 // Rebuilds the resource-allocation graph from the current tables.
 void DeadlockTab::redraw() {
-    Matrix alloc, req, av;
+    Matrix alloc, req, tot;
     if (!readTable(nullptr, allocT_, "", alloc, true) || !readTable(nullptr, reqT_, "", req, true) ||
-        !readTable(nullptr, availT_, "", av, true))
+        !readTable(nullptr, totalT_, "", tot, true))
         return;                                           // half-edited table: keep the old picture
-    Vec total = av[0];                                    // total instances = available + allocated
-    for (const Vec& r : alloc)
-        for (size_t j = 0; j < total.size(); ++j) total[j] += r[j];
     try {
-        rag_->showGraph(buildRag(alloc, req), alloc, req, total, deadlocked_, killed_, rowPids_);
+        rag_->showGraph(buildRag(alloc, req), alloc, req, tot[0], deadlocked_, killed_, rowPids_);
     } catch (const std::exception&) {}
 }
 
@@ -402,6 +495,8 @@ bool DeadlockTab::checkSafety() {
             trace_->addItem("No remaining process has Need <= Work -> state is UNSAFE");
         }
         status_->setText(text);
+        totalsMsg_ = false;
+        addMaxWarning();
         history_ << "Banker's safety: " + text;
         emit logMessage("Deadlock: " + text);
         return true;
@@ -434,16 +529,18 @@ bool DeadlockTab::requestResources(int row, const QString& text) {
                                                               r.granted ? "GRANTED" : "DENIED",
                                                               QString::fromStdString(r.reason));
         if (r.granted) {
-            for (size_t j = 0; j < request.size(); ++j) { alloc[row][j] += request[j]; avail[j] -= request[j]; }
+            for (size_t j = 0; j < request.size(); ++j) alloc[row][j] += request[j];
             writeMatrix(allocT_, alloc);
-            writeAvail(avail);
             updateNeed();
+            updateAvail();                              // Total is unchanged, so Available drops
             redraw();
             msg += QString(" | new safe sequence <%1>").arg(pidList(r.safetyAfter.sequence));
         }
         status_->setText(msg);
         status_->setStyleSheet(QString("color:%1").arg(r.granted ? ui::hitColor().darker(130).name() : ui::faultColor().name()));
+        totalsMsg_ = false;
         trace_->addItem(msg);
+        addMaxWarning();
         history_ << msg;
         emit logMessage("Deadlock: " + msg);
         return r.granted;
@@ -470,6 +567,7 @@ bool DeadlockTab::detect() {
             status_->setStyleSheet(QString("color:%1").arg(ui::hitColor().darker(130).name()));
         }
         status_->setText(text);
+        totalsMsg_ = false;
         trace_->clear();
         trace_->addItem(text);
         RagGraph g = buildRag(alloc, req);
@@ -502,6 +600,7 @@ bool DeadlockTab::recover(int stepDelayMs) {
     }
     if (recSteps_.empty()) {
         status_->setText("No deadlock: nothing to recover.");
+        totalsMsg_ = false;
         status_->setStyleSheet(QString("color:%1").arg(ui::hitColor().darker(130).name()));
         emit recoveryFinished();
         return true;
@@ -518,14 +617,12 @@ void DeadlockTab::applyRecoveryStep(size_t k, int delay) {
     const RecoveryStep& s = recSteps_[k];
     Matrix alloc, max, req; Vec avail;
     readAll(alloc, max, req, avail);
-    for (size_t j = 0; j < avail.size(); ++j) {
-        avail[j] += s.released[j];
-        alloc[s.killedPid][j] = 0;
+    for (size_t j = 0; j < avail.size(); ++j) {         // released instances return to Available
+        alloc[s.killedPid][j] = 0;                       // (Available = Total - Allocation)
         req[s.killedPid][j] = 0;
     }
     writeMatrix(allocT_, alloc);
     writeMatrix(reqT_, req);
-    writeAvail(avail);
     killed_.push_back(s.killedPid);
     deadlocked_ = s.after.deadlocked_pids;
     lastDetect_ = s.after;
@@ -537,9 +634,11 @@ void DeadlockTab::applyRecoveryStep(size_t k, int delay) {
     history_ << msg;
     emit logMessage("Deadlock: " + msg);
     updateNeed();
+    updateAvail();
     highlightRows(deadlocked_, ui::lightRed());
     redraw();
     status_->setText(msg);
+    totalsMsg_ = false;
     status_->setStyleSheet(QString("color:%1").arg(s.after.deadlocked ? ui::faultColor().name()
                                                                        : ui::hitColor().darker(130).name()));
     if (k + 1 < recSteps_.size()) {
@@ -559,14 +658,14 @@ QString DeadlockTab::reportText() const {
     auto dump = [&](const QString& name, QTableWidget* t) {
         QString s = name + ":\n";
         for (int i = 0; i < t->rowCount(); ++i) {
-            s += "  " + (t == availT_ ? QString("    ") : pidName(i).leftJustified(4));
+            s += "  " + (t == availT_ || t == totalT_ ? QString("    ") : pidName(i).leftJustified(4));
             for (int j = 0; j < t->columnCount(); ++j) s += " " + (t->item(i, j) ? t->item(i, j)->text() : "0").rightJustified(3);
             s += "\n";
         }
         return s;
     };
     QString out = dump("Allocation", allocT_) + dump("Max", maxT_) + dump("Need", needT_) +
-                  dump("Request", reqT_) + dump("Available", availT_);
+                  dump("Request", reqT_) + dump("Total", totalT_) + dump("Available", availT_);
     out += "Last result: " + status_->text() + "\n";
     for (const QString& h : history_) out += "  " + h + "\n";
     return out;
@@ -585,7 +684,9 @@ QString DeadlockTab::csvSection() const {
             for (int j = 0; j < m; ++j) out += "," + (t->item(i, j) ? t->item(i, j)->text() : "0");
         out += "\n";
     }
-    out += "available";
+    out += "total";
+    for (int j = 0; j < m; ++j) out += "," + (totalT_->item(0, j) ? totalT_->item(0, j)->text() : "0");
+    out += "\navailable";
     for (int j = 0; j < m; ++j) out += "," + (availT_->item(0, j) ? availT_->item(0, j)->text() : "0");
     out += "\n\n## Deadlock result\nresult\n\"" + status_->text() + "\"\n";
     for (const QString& h : history_) out += "\"" + QString(h).replace('"', '\'') + "\"\n";

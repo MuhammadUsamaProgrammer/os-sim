@@ -17,7 +17,13 @@ public:
                    const std::vector<int>& rowPids);
 protected:
     void resizeEvent(QResizeEvent* e) override;
+    // Redraws the last graph when the light/dark theme changes.
+    void changeEvent(QEvent* e) override;
 private:
     void addArrow(QPointF from, QPointF to, double fromR, double toR, double offset,
                   const QColor& c, bool dashed, int count);
+    // Last inputs, kept so the graph can be redrawn in new theme colours.
+    bool hasGraph_ = false;
+    RagGraph g_; Matrix alloc_, request_; Vec total_;
+    std::vector<int> deadlocked_, killed_, rowPids_;
 };

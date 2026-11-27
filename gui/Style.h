@@ -32,6 +32,10 @@ inline QColor faultColor() { return QColor("#e15759"); }   // red: faults / dead
 inline QColor hitColor()   { return QColor("#59a14f"); }   // green: hits / safe
 inline QColor lightRed()   { return QColor("#f8c9ca"); }
 inline QColor lightGreen() { return QColor("#cfe8c9"); }
+// Dark text for cells with a light background colour (readable in both themes).
+inline QColor darkInk()    { return QColor("#1f2328"); }
+// Gives a table cell a light background and dark text.
+inline void shade(QTableWidgetItem* it, const QColor& bg) { it->setBackground(bg); it->setForeground(darkInk()); }
 
 // Fixed colour per pid (12-colour palette, repeated).
 inline QColor pidColor(int pid) {

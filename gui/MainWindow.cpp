@@ -13,6 +13,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QSettings>
+#include <QToolButton>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QThread>
@@ -24,6 +26,7 @@
 #include "MemoryTab.h"
 #include "SchedulingTab.h"
 #include "Style.h"
+#include "Theme.h"
 
 // Creates the tabs, the log dock (read-only, monospace) and the menus.
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -91,8 +94,31 @@ void MainWindow::buildMenus() {
     file->addAction("Export report...", this, &MainWindow::exportReport);
     file->addSeparator();
     file->addAction("Exit", QKeySequence::Quit, this, &QWidget::close);
+    QMenu* view = menuBar()->addMenu("&View");
+    darkAction_ = view->addAction("Dark theme");
+    darkAction_->setCheckable(true);
+    darkAction_->setShortcut(QKeySequence("Ctrl+T"));
+    connect(darkAction_, &QAction::toggled, this, &MainWindow::setDarkTheme);
+
+    // Light/dark switch button in the top-right corner of the menu bar.
+    themeButton_ = new QToolButton(this);
+    themeButton_->setAutoRaise(true);
+    themeButton_->setToolTip("Switch between light and dark theme (Ctrl+T)");
+    connect(themeButton_, &QToolButton::clicked, this, [this] { darkAction_->toggle(); });
+    menuBar()->setCornerWidget(themeButton_, Qt::TopRightCorner);
+    darkAction_->setChecked(ui::darkTheme());
+    setDarkTheme(ui::darkTheme());                      // sets the button text
+
     QMenu* help = menuBar()->addMenu("&Help");
     help->addAction("About", this, &MainWindow::showAbout);
+}
+
+// Applies the theme, updates the switch button and saves the choice for the next start.
+void MainWindow::setDarkTheme(bool dark) {
+    if (dark != ui::darkTheme()) ui::applyTheme(dark);
+    if (darkAction_->isChecked() != dark) darkAction_->setChecked(dark);
+    themeButton_->setText(dark ? QString::fromUtf8("\u2600 Light mode") : QString::fromUtf8("\u263E Dark mode"));
+    if (!ui::selfTestMode()) QSettings("OS-Sim", "OS-Sim").setValue("darkTheme", dark);
 }
 
 // Appends one line to the shared event log.
@@ -447,6 +473,12 @@ int MainWindow::runSelfTest() {
     sched_->compareAll();
     QString base = QDir::temp().filePath(QString("ossim_selftest_%1").arg(QCoreApplication::applicationPid()));
     QString err;
+    // Theme switch: dark and back to light must work and keep the window alive
+    setDarkTheme(true);
+    stCheck(ui::darkTheme() && darkAction_->isChecked(), "switch to dark theme");
+    setDarkTheme(false);
+    stCheck(!ui::darkTheme() && !darkAction_->isChecked(), "switch back to light theme");
+
     stCheck(writeReport(base, &err), "export report " + err);
     QFile tf(base + ".txt"), cf(base + ".csv");
     bool opened = tf.open(QIODevice::ReadOnly) && cf.open(QIODevice::ReadOnly);

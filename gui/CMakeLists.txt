@@ -4,7 +4,7 @@ find_package(Qt6 COMPONENTS Widgets)
 if(Qt6_FOUND AND Qt6Widgets_FOUND)
   set(CMAKE_AUTOMOC ON)
   add_executable(ossim
-    main.cpp Style.h
+    main.cpp Style.h Theme.h
     MainWindow.h MainWindow.cpp
     SchedulingTab.h SchedulingTab.cpp
     MemoryTab.h MemoryTab.cpp

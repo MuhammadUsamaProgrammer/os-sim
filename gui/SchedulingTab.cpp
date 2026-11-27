@@ -351,7 +351,7 @@ void SchedulingTab::showResult(const SchedResult& r) {
         int vals[] = {m.pid, m.arrival, m.burst, m.completion, m.waiting, m.turnaround, m.response};
         for (int c = 0; c < 7; ++c)
             resultTable_->setItem(row, c, ui::roItem(c == 0 ? QString("P%1").arg(vals[0]) : QString::number(vals[c])));
-        resultTable_->item(row, 0)->setBackground(ui::pidColor(m.pid).lighter(150));
+        ui::shade(resultTable_->item(row, 0), ui::pidColor(m.pid).lighter(150));
     }
     int row = resultTable_->rowCount();
     resultTable_->insertRow(row);
@@ -438,8 +438,8 @@ void SchedulingTab::refreshStateTable() {
         const ProcSnapshot& p = s.procs[i];
         stateTable_->setItem(i, 0, ui::roItem(QString("P%1").arg(p.pid)));
         auto* st = ui::roItem(stateName(p.state));
-        if (p.state == ProcState::Running) st->setBackground(ui::pidColor(p.pid).lighter(130));
-        else if (p.state == ProcState::Terminated) st->setBackground(ui::idleColor());
+        if (p.state == ProcState::Running) ui::shade(st, ui::pidColor(p.pid).lighter(130));
+        else if (p.state == ProcState::Terminated) ui::shade(st, ui::idleColor());
         stateTable_->setItem(i, 1, st);
         stateTable_->setItem(i, 2, ui::roItem(QString::number(p.remaining)));
     }
@@ -582,7 +582,7 @@ bool SchedulingTab::runIntegrated() {
                          killed ? "-" : QString::number(m.waiting), killed ? "-" : QString::number(m.turnaround),
                          QString::number(m.response)};
         for (int c = 0; c < 7; ++c) resultTable_->setItem(row, c, ui::roItem(v[c]));
-        resultTable_->item(row, 0)->setBackground(killed ? ui::lightRed() : ui::pidColor(m.pid).lighter(150));
+        ui::shade(resultTable_->item(row, 0), killed ? ui::lightRed() : ui::pidColor(m.pid).lighter(150));
     }
     summaryLabel_->setText(QString("<b>Integrated</b> &nbsp; avg WT = %1 &nbsp; avg TAT = %2 (completed processes) "
                                    "&nbsp;|&nbsp; memory: %3 faults, %4 hits, hit ratio %5 &nbsp;|&nbsp; requests: "

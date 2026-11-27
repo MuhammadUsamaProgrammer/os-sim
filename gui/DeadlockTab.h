@@ -47,19 +47,22 @@ signals:
 private slots:
     void onSizeChanged();
     void updateNeed();
+    void updateAvail();
     void redraw();
 
 private:
     bool readAll(Matrix& alloc, Matrix& max, Matrix& req, Vec& avail);
     void writeMatrix(QTableWidget* t, const Matrix& m);
-    void writeAvail(const Vec& v);
+    void writeTotal(const Vec& v);
+    bool totalsProblem(QString& error, QString& warning) const;
+    void addMaxWarning();
     void highlightRows(const std::vector<int>& rows, const QColor& c);
     QString pidName(int row) const;
     QString pidList(const std::vector<int>& rows) const;
     void applyRecoveryStep(size_t k, int delay);
 
     QSpinBox *procSpin_, *resSpin_;
-    QTableWidget *allocT_, *maxT_, *needT_, *reqT_, *availT_;
+    QTableWidget *allocT_, *maxT_, *needT_, *reqT_, *availT_, *totalT_;   // availT_ is computed: Total - sum(Allocation)
     QLabel* status_;
     QListWidget* trace_;
     QComboBox* reqPid_;
@@ -74,4 +77,5 @@ private:
     std::vector<RecoveryStep> recSteps_;
     QStringList history_;                           // lines for the report
     bool recovering_ = false;
+    bool totalsMsg_ = false;                        // status label shows a Total/Allocation message
 };
