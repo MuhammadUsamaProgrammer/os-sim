@@ -257,9 +257,9 @@ void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* c
         if (bar) ll->addWidget(bar);
         if (bottom) ll->addWidget(bottom, 1);
         vsplit->addWidget(low);
-        vsplit->setStretchFactor(0, 3);
+        vsplit->setStretchFactor(0, 4);                // the visualization gets most of the height
         vsplit->setStretchFactor(1, 2);
-        vsplit->setSizes({430, 220});
+        vsplit->setSizes({470, 190});
     }
     lay->addWidget(vsplit, 1);
 }

@@ -48,6 +48,20 @@ and runs each primitive with real POSIX threads.
   scenarios. A **Comparison** page runs the same two-process workload unsynchronized, with Peterson,
   a mutex and a binary semaphore. A **Real POSIX demo** page runs each primitive with real threads
   (`pthread_mutex`, `sem_t`, `pthread_cond`, `std::atomic` seq_cst for Peterson).
+- **Phase 2 learning modules** (details: `docs/PHASE2_MODULES.md`). Every view is driven by a deterministic
+  model in `core/` and shares one playback bar (Run, Pause/Resume, Prev, Next, Stop, Reset, speed, timeline scrubber):
+  - **Processes:** 5-state / 2-state diagram with animated tokens, CPU and queues, process tree, PCB inspector,
+    manual validated transitions; the automatic mode reuses the Scheduling tab's dispatcher.
+  - **Threads:** Many-to-One / One-to-One / Many-to-Many mapping of user threads onto kernel contexts and cores,
+    blocking and joins, model comparison, concurrency vs parallelism.
+  - **IPC:** shared memory, direct / indirect message passing (bounded, blocking / non-blocking), pipes (byte stream, EOF).
+  - **I/O:** polling vs interrupts vs DMA on one workload, animated system bus diagram, CPU / device / bus / DMA lanes,
+    aligned comparison with defined metrics.
+  - **Disk:** FCFS, SSTF, SCAN, C-SCAN, LOOK, C-LOOK with a platter and a seek graph, comparison of all six.
+  - **Memory** (now a Memory area): the original page-replacement page plus Allocation & Fragmentation,
+    Paging & Address Translation, Segmentation, Demand Paging, Swapping and Thrashing.
+  - **Live Linux Demos** (clearly labelled) run real `fork/exec/wait/sleep`, zombie, orphan, signals, System V
+    shared memory and message queues, pipes, FIFOs and pthreads in a separate helper program (`ossim_helper`).
 - **Export:** `File > Export report...` writes `<name>.txt` and `<name>.csv` with every section.
 - Bad input never crashes the program. It shows a warning dialog instead.
 
@@ -66,7 +80,7 @@ demo and the tests still build.
 ```bash
 mkdir -p build && cd build
 cmake .. && make -j2          # use make -j1 if the VM runs out of memory
-ctest --output-on-failure     # 7 test programs, all must pass
+ctest --output-on-failure     # 14 test programs, all must pass
 ./gui/ossim                   # the GUI
 QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest   # automatic GUI smoke test, exit code 0
 ```
@@ -80,6 +94,8 @@ Console demo (run from the project root so `samples/` is found):
 ./build/apps/ossim_console deadlock
 ./build/apps/ossim_console engine samples/processes_fcfs.csv rr 4 --real   # live thread log + fork/exec demo
 ./build/apps/ossim_console sync --real          # synchronization scenarios, comparison, real pthread demos
+./build/apps/ossim_helper zombie                # one Live Linux demo on its own (fork exec wait sleep zombie
+                                                # orphan signal shm msg pipe fifo "threads 4 10")
 ```
 
 Sanitizer builds (manual checks):
@@ -101,12 +117,19 @@ os-sim/
 │   ├── deadlock.*       Banker's, detection, recovery, RAG
 │   ├── integrated.*     integrated run (scheduling + paging + resources)
 │   ├── sync.*           synchronization simulator (race, Peterson, mutex, semaphores, buffer, monitor)
+│   ├── disk.*           disk scheduling (Phase 2, M1)
+│   ├── procmgmt.*       process lifecycle, reuses schedulerPick (M2)
+│   ├── ipc.*            shared memory, message passing, pipes (M3)
+│   ├── memadv.*         allocation, paging / segmentation translation, demand paging, swapping, thrashing (M4)
+│   ├── iomodel.*        polling / interrupts / DMA (M5)
+│   └── threads.*        threading models (M6)
 │   └── io_formats.*     sample file loaders/savers
 ├── engine/            pthreads + semaphores + mutex + condvar + pipe (library osengine)
 │   ├── engine.*         SimulationEngine, realProcessDemo (fork/exec/wait)
 │   ├── logger.*         PipeLogger (pipe IPC)
 │   └── sync_demo.*      real pthread demos of every synchronization primitive (cancellable)
 ├── apps/console_main.cpp   console demo (ossim_console)
+├── apps/ossim_helper.cpp   Live Linux demo helper (single-threaded, launched with QProcess)
 ├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab
 ├── tests/             one test program per module, registered with ctest
 ├── samples/           process CSVs, reference strings, Banker/deadlock matrices, scripted requests
@@ -149,6 +172,13 @@ os-sim/
 4. **Detect deadlock** paints the deadlocked processes red in the tables and in the graph.
    **Recover** terminates victims one by one and redraws.
 5. **Use Scheduling tab pids** labels the rows with the Scheduling tab's processes.
+
+### Phase 2 tabs (Processes, Threads, IPC, I/O, Disk, Memory sub-tabs)
+Each tab has the same layout: configuration and presets on the left, the visualization in the middle, an inspector
+on the right, the playback bar and pages (log, timeline, comparison, Live Linux demo) at the bottom. Choose a preset,
+press **Run** (or **Next** step by step, **Prev** to go back), change inputs to rebuild. Live demos: open the
+*Live Linux demo* page, pick a demo and press **Start live demo** (Stop cancels it safely). A recommended viva
+demonstration order is in `docs/PHASE2_MODULES.md`.
 
 ### Synchronization tab
 1. Choose an **algorithm** and a **sample scenario** (e.g. *Race condition > Lost update*). The

@@ -36,7 +36,11 @@ primitives with real POSIX threads.
    counting semaphores, producer-consumer, monitors) step by step, compare the mechanisms, and
    demonstrate each primitive with real threads.
 
-All six objectives are met (see Section 7).
+7. (Phase 2) Turn OS-Sim into a learning platform with six more modules: disk scheduling, process
+   management, IPC, advanced memory management, I/O management (polling / interrupts / DMA) and
+   multithreading models, each with deterministic simulations, animated views and Live Linux demos.
+
+All seven objectives are met (see Section 7).
 
 ## 3. OS concepts used (concept → file → function)
 
@@ -64,6 +68,14 @@ All six objectives are met (see Section 7).
 | Producer-consumer | `core/sync.cpp` (programs with `empty`, `full`, `mutex`); `engine/sync_demo.cpp`: `producerBody()`, `consumerBody()` | bounded buffer, blocking on full / empty, overflow and underflow checks |
 | Monitors, condition variables | `core/sync.cpp`: `Op::MonEnter/MonExit/CondWhile/CondWait/CondSignal`; `engine/sync_demo.cpp`: `monitorInsert()`, `monitorRemove()` | Mesa semantics (signalled process re-enters through the entry queue and re-checks its while condition); `pthread_cond_wait/signal/broadcast` |
 | Safe cancellation | `engine/sync_demo.cpp`: `SyncDemoRunner::cancel()`; `gui/SyncBridge.cpp` | flag + `sem_post` / `pthread_cond_broadcast` wakes every blocked thread, then `pthread_join` |
+| Disk scheduling | `core/disk.cpp`: `runDisk()` | FCFS, SSTF, SCAN, C-SCAN, LOOK, C-LOOK; head moves with boundary / wrap kinds |
+| Process lifecycle, PCB | `core/procmgmt.cpp`: `LifecycleSim::admit/dispatch/preempt/blockIO/completeIO/exitRunning/kill/tick`, `runAuto()` | validated 5-state transitions; automatic mode reuses `schedulerPick()` |
+| fork / exec / wait / zombie / orphan / signals | `apps/ossim_helper.cpp`: `demoFork()`, `demoExec()`, `demoWait()`, `demoZombie()`, `demoOrphan()`, `demoSignal()` | real system calls on the helper's own children, bounded `waitpid`, subreaper |
+| IPC | `core/ipc.cpp`: `IpcSim::apply()`; `apps/ossim_helper.cpp`: `demoShm()`, `demoMsg()`, `demoPipe()`, `demoFifo()` | shared memory, message queues (blocking / non-blocking), pipes / FIFOs with EOF rules |
+| Contiguous allocation, paging, segmentation | `core/memadv.cpp`: `runAllocation()`, `translatePaging()`, `translateSegment()`, `baseLimitCheck()` | First / Best / Worst Fit, coalescing, compaction, page tables, segment tables, traps |
+| Demand paging, thrashing | `core/memadv.cpp`: `runDemandPaging()` (uses `FramePool`), `runThrashing()`, `multiprogrammingCurve()` | page-fault steps, dirty write-back, working set, utilisation model |
+| Polling, interrupts, DMA | `core/iomodel.cpp`: `runIo()`, `compareIo()` | logical-tick bus model, pending IRQ queue, DMA setup / completion, cycle stealing |
+| Threading models | `core/threads.cpp`: `runThreads()`; `apps/ossim_helper.cpp`: `demoThreads()` | Many-to-One, One-to-One, Many-to-Many; real `pthread_create` / `pthread_join` with arguments and results |
 
 ## 4. System design
 
@@ -196,6 +208,17 @@ observer callback into a signal delivered with a queued connection to the GUI th
 threads never touch widgets. Each run has a generation number so stale queued events are ignored.
 Every input is validated and errors are shown with `QMessageBox::warning`.
 
+### 5.8 Phase 2 modules (details and reference tables: `docs/PHASE2_MODULES.md`)
+Each module follows the same design: a pure model in `core/` returns a complete trace of snapshots (or events);
+the GUI tab shows snapshot *k* of the trace with the shared `PlaybackBar` (Run, Pause/Resume, Prev, Next, Stop,
+Reset, speed, scrubber), so Prev simply restores an earlier snapshot. Views (`DiskViews`, `LifecycleViews`,
+`IoViews`, `MemAdvViews`, `IpcView`, `ThreadMapView`) only paint the snapshot and animate the change from the
+previous one with `QVariantAnimation`. Live Linux demos run in `ossim_helper`, a small single-threaded program the
+GUI starts with `QProcess` (`NativeRunner`): it puts itself in its own process group so Stop (SIGTERM, then SIGKILL
+after 1.5 s) reaches only its own children; every wait is bounded; System V objects are created with IPC_PRIVATE and
+removed; FIFOs live in a private `mkdtemp` directory. Each event is one line `T= ROLE= PID= PPID= EVENT= | detail`,
+parsed by the GUI and by `test_native`.
+
 ### 5.7 Process synchronization (`core/sync.cpp`, `engine/sync_demo.cpp`, `gui/Sync*`)
 **Simulation (`core/`).** Every process runs a small program of pseudocode lines (`Instr`: operation,
 synchronization object, text, enter/leave critical-section flags). `SyncSim::step(pid)` executes exactly
@@ -315,7 +338,19 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | Real threads: counting semaphore, producer-consumer, monitor | at most S inside; 120 of 120 items, equal checksums | pass |
 | Cancellation while threads are blocked (6 primitives x 2), then run again | `run()` returns (watchdog), runner reusable | pass |
 
-### 6.7 Sanitizers and GUI smoke test
+### 6.7 Phase 2 tests
+
+| Program | Checks | What is asserted (real results) |
+|---|---|---|
+| `test_disk` | 487 | FCFS 640, SSTF 236, SCAN 331, C-SCAN 382, LOOK 299, C-LOOK 322 with the exact service orders; reverse direction (SCAN 236, LOOK 208, C-SCAN 386, C-LOOK 326); duplicates, head / boundary requests, one side, single / empty queue, ties; 50 random workloads serviced exactly once |
+| `test_procmgmt` | 62 | reference event sequence; queue / state invariants after every event; finish times equal `runScheduler()` for all 6 policies; idle CPU; tree; every refused transition; branch after Prev |
+| `test_io` | 49 | hand-traced CPU sequences `PUPUPCPC`, `UUUICUIC`, `SSUUUUUD` (latency 8 each); exact transfer; accounting; small vs bulk; slow device; cycle stealing; back-pressure |
+| `test_memadv` | 108 | 426 fails with First / Worst Fit, fits with Best Fit; coalescing; compaction; internal waste; 2500 -> 5572; traps; segmentation 4250 / fault; demand paging 10 / 9 / 7 and identical frames to `runPageReplacement`; write-back; swapping; thrashing 20 vs 4 faults |
+| `test_ipc` | 52 | HELLO; FIFO order; capacity; blocking vs non-blocking; wake-ups; EOF / EPIPE; removal; replay |
+| `test_threads` | 35 | 12 / 4 / 6 ticks; context / core exclusivity every tick; no lost or duplicated work; blocking 15 vs 7; join order; migrations |
+| `test_native` | 64 | real fork / exec (same PID) / wait / zombie (`Z`) / orphan (subreaper) / signal / shm (HELLO) / msg (ENOMSG, FIFO) / pipe (EOF) / FIFO / pthreads (arguments and results), twice each |
+
+### 6.8 Sanitizers and GUI smoke test
 - `-DSANITIZE=thread`: all test programs pass (including the real synchronization demos), no ThreadSanitizer report.
 - `-DSANITIZE=address` (address + undefined): all tests pass and the whole GUI `--selftest` exits 0 with no report.
 - `QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest` loads every sample, runs every action
@@ -418,6 +453,14 @@ load/store with 4 threads x 20000 lost 8202 of 80000 updates; Peterson 10000 of 
 and `sem_t` 80000 of 80000 with at most one thread inside; counting semaphore at most 2 at once;
 producer-consumer and monitor 20 of 20 items with equal checksums.
 
+### 7.6 Phase 2 results (real output)
+- Disk, reference queue: FCFS 640, SSTF 236, SCAN 331, C-SCAN 382, LOOK 299, C-LOOK 322 cylinders.
+- I/O, common window: small transfer - DMA overhead 5 ticks vs interrupt 2 (DMA loses); bulk 32 units - useful CPU
+  ticks polling 23, interrupt 1, DMA 94 of 97; cycle stealing - 32 stalls (one per unit).
+- Memory: demand paging 10 / 9 / 7 faults (FIFO / LRU / Optimal); thrashing 20 vs 4 faults (3 vs 4 frames);
+  multiprogramming model peak utilisation 1.00 at degree 2, 0.10 at degree 12.
+- Threads: 12 / 4 / 6 ticks (Many-to-One / One-to-One / Many-to-Many); with a blocking call 15 vs 7.
+
 ## 8. Limitations
 
 - The animated engine **replays** a precomputed schedule; the threads do not make scheduling
@@ -438,6 +481,10 @@ producer-consumer and monitor 20 of 20 items with equal checksums.
   prove correctness (the Peterson test therefore explores every reachable state). The real race
   demo may show 0 lost updates on a single-CPU machine. The monitor uses Mesa (signal-and-continue)
   semantics, like pthreads, not Hoare semantics.
+
+- Phase 2: see the "Limitations" section of `docs/PHASE2_MODULES.md` (static disk batch, single CPU / device /
+  DMA channel, modelled ids and capacities in IPC, labelled cost and utilisation models, Linux-only live demos,
+  offscreen-only visual checks).
 
 ## 9. Conclusion
 

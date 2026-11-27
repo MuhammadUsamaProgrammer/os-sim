@@ -17,6 +17,14 @@ Start the app with `cd build && ./gui/ossim` and maximise the window.
 | 10 | `10_sync_peterson.png` | *Peterson's solution*, *Both want to enter at the same time*, **Step** 9 times: P0 in the critical section, P1 busy-waiting, flags and turn visible. |
 | 11 | `11_sync_producer_consumer.png` | *Producer-consumer*, *Fast producer*, **Run** and **Pause** when the producer sits in the queue of `empty` with the buffer full. |
 | 12 | `12_sync_comparison.png` | **Comparison** page, **Compare**: table + chart (unsynchronized loses updates, the others do not). |
+| 13 | `13_disk_scan.png` | Disk tab, File > Load sample > disk_reference.txt, algorithm SCAN, **Next** x4: platter + seek graph. Then the *Compare all six* page. |
+| 14 | `14_process_lifecycle.png` | Processes tab, reference preset, step to t=2 (P2 in WAITING, P3 dispatched), PCB of P2 selected. |
+| 15 | `15_process_zombie.png` | Processes tab, *Live Linux demo* page, demo `zombie`, Start: the Z state line and the reaping. |
+| 16 | `16_io_compare.png` | I/O tab, hand-traced preset, *Compare the three modes* page (aligned lanes + table). |
+| 17 | `17_memory_allocation.png` | Memory > Allocation & Fragmentation, textbook preset, step 4: P4 fails with First / Worst Fit. |
+| 18 | `18_memory_paging.png` | Memory > Paging & Address Translation, reference preset, last step: 2500 -> 5572. |
+| 19 | `19_ipc_pipe.png` | IPC tab, preset *Anonymous pipe*, step 4 (partial read, bytes left in the pipe). |
+| 20 | `20_threads_models.png` | Threads tab, Many-to-Many preset at tick 3, then the *Compare the three models* page. |
 
 Shortcut: the self-test can save window images automatically (without window frames):
 `cd build && OSSIM_SHOTS=../docs/screenshots QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest`

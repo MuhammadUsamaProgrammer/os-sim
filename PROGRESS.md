@@ -15,6 +15,14 @@ Read this first after a session restart; continue from the first unfinished stag
 | 9 | Integration + export | DONE |
 | 10 | Polish, docs, final verification | DONE |
 | 11 | Extension: process synchronization module | DONE |
+| P2-0 | Phase 2 baseline (build 0 warnings, 7/7 ctest, selftest 117 PASS) | DONE |
+| P2-1 | Shared playback kit + M1 Disk Scheduling | DONE |
+| P2-2 | M2 Process Management + Live Linux helper | DONE |
+| P2-3 | M5 I/O Management | DONE |
+| P2-4 | M4 Advanced Memory | DONE |
+| P2-5 | M3 IPC | DONE |
+| P2-6 | M6 Multithreading | DONE |
+| P2-7 | Integration, robustness, docs, sanitizers | DONE |
 
 ## Environment
 Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Charts found).
@@ -162,10 +170,28 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
 - Notes: simulated queues are FIFO (POSIX promises no order - stated in the GUI and docs). The animation is
   driven by a QTimer stepping the core model (deterministic); real concurrency is in the POSIX demo page.
 
+## Phase 2 (specification: OS_SIM_PHASE_2_IMPLEMENTATION.md; details: docs/PHASE2_MODULES.md)
+- Baseline before Phase 2: clean build 0 warnings, ctest 7/7, GUI selftest 117 PASS. The nested empty folder `os-sim/`
+  in the project root was left untouched.
+- Order followed: M1 Disk -> M2 Processes -> M5 I/O -> M4 Memory -> M3 IPC -> M6 Threads (as in the specification).
+- Shared infrastructure: `gui/ModuleKit.*` (PlaybackBar, PseudoCodeView, ModuleHeader, semantic colours, layout helper),
+  `gui/NativeRunner.*` (QProcess runner with run ids, process-group Stop with SIGKILL escalation, safe destruction),
+  `apps/ossim_helper.cpp` (all Live Linux demos; the multithreaded GUI never forks).
+- Compatibility changes: the Memory tab became the first sub-tab of the new Memory area (MainWindow::showMemoryTab());
+  MainWindow disconnects child signals in its destructor (found by the new shutdown test: a helper finishing during
+  shutdown delivered a signal to a half-destroyed window). The report export gained Phase 2 sections only.
+- Tests: test_disk 487, test_procmgmt 62, test_io 49, test_memadv 108, test_ipc 52, test_threads 35, test_native 64
+  checks; ctest 14/14. GUI selftest 211 PASS including all six modules, live demos, dark theme and 1100x700
+  screenshots, and a clean shutdown with work still running (no helper process left).
+- Expected values that were mis-derived in two of my own tests were corrected after re-deriving by hand
+  (I/O polling useful ticks = 2, allocation candidates for 212 = 3); no model code was bent to fit a test.
+- Live demo cleanup checked manually: no System V segments/queues or /tmp/ossim-fifo-* left after the runs.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
 - [x] Section 11 (synchronization extension): every algorithm simulated, tested, in the GUI and documented.
+- [x] Phase 2: M1-M6 implemented with real models, tested, in the GUI and documented (docs/PHASE2_MODULES.md).
 - [x] `./gui/ossim` launches; all three tabs work; bad input shows warnings; `--selftest` exits 0 offscreen.
 - [x] Engine uses pthread_create/join, pthread_mutex_*, sem_init/wait/post/destroy, pthread_cond_* and pipe();
       20 runs give byte-identical logs.

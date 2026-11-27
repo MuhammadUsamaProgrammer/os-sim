@@ -24,6 +24,9 @@ NativeRunner::NativeRunner(QObject* parent) : QObject(parent) {
 }
 
 NativeRunner::~NativeRunner() {
+    // No signals while the owner (and the main window) are being destroyed.
+    blockSignals(true);
+    proc_->disconnect(this);
     if (running()) {
         stop();
         if (!proc_->waitForFinished(1500)) {     // only at shutdown; demos are short

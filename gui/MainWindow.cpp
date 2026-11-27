@@ -110,7 +110,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     loadSample(ui::samplesDir() + "/processes_fcfs.csv");
 }
 
-MainWindow::~MainWindow() = default;
+// Children may still emit signals while they are destroyed (e.g. a live demo helper that
+// finishes during shutdown): cut every connection to this window first.
+MainWindow::~MainWindow() {
+    const auto kids = findChildren<QObject*>();
+    for (QObject* o : kids) o->disconnect(this);
+}
 
 // Selects the Memory area and its "Page replacement" sub-tab (the original Memory tab).
 void MainWindow::showMemoryTab() {
@@ -850,7 +855,28 @@ int MainWindow::runSelfTest() {
     // Theme switch: dark and back to light must work and keep the window alive
     setDarkTheme(true);
     stCheck(ui::darkTheme() && darkAction_->isChecked(), "switch to dark theme");
+    // Phase 2 tabs in the dark theme and at the minimum window size (screenshots for inspection)
+    io_->loadPreset(0);
+    io_->playback()->setPosition(4);
+    tabs_->setCurrentWidget(io_);
+    shot(this, "dark_io");
+    tabs_->setCurrentWidget(proc_);
+    proc_->loadPreset(0);
+    proc_->playback()->setPosition(8);
+    shot(this, "dark_process");
+    tabs_->setCurrentWidget(memArea_);
+    memArea_->setCurrentIndex(2);
+    shot(this, "dark_paging");
     setDarkTheme(false);
+    resize(1100, 700);
+    for (QWidget* t : std::initializer_list<QWidget*>{disk_, proc_, io_, ipc_, threads_}) {
+        tabs_->setCurrentWidget(t);
+        shot(this, QString("small_%1").arg(tabs_->tabText(tabs_->currentIndex()).remove('/')));
+    }
+    memArea_->setCurrentIndex(1);
+    tabs_->setCurrentWidget(memArea_);
+    shot(this, "small_memory_allocation");
+    resize(1280, 800);
     stCheck(!ui::darkTheme() && !darkAction_->isChecked(), "switch back to light theme");
 
     stCheck(writeReport(base, &err), "export report " + err);
@@ -870,6 +896,11 @@ int MainWindow::runSelfTest() {
     QFile::remove(base + ".txt");
     QFile::remove(base + ".csv");
 
+    // Leave work running on purpose: closing the window must stop the animations and the live
+    // demo helper cleanly (checked from outside: no ossim_helper process may remain).
+    if (NativeRunner::available()) proc_->startDemo("sleep");
+    disk_->playback()->run();
+    sync_->run();
     std::printf("[selftest] %s (%d failure(s))\n", g_stFail ? "FAILED" : "ALL PASSED", g_stFail);
     return g_stFail ? 1 : 0;
 }

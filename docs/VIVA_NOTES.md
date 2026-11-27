@@ -313,3 +313,68 @@ a signal. Qt delivers it through a **queued connection** to the GUI thread (`gui
 37. **How do you stop a real demo whose threads are blocked?**
     `SyncDemoRunner::cancel()` sets a flag and posts the semaphores / broadcasts the condition
     variables. A woken thread sees the flag, passes the wake-up on and exits, and `run()` joins them all.
+
+---
+
+## Part D: Phase 2 modules (see `docs/PHASE2_MODULES.md` for the demonstration order)
+
+**How the code is organised.** Each module has a pure model in `core/` (`disk`, `procmgmt`, `ipc`, `memadv`,
+`iomodel`, `threads`) that returns a whole trace; the GUI tab plays the trace with `PlaybackBar` and animates the
+difference between two snapshots. Real system calls only happen in `apps/ossim_helper.cpp`, started by `NativeRunner`
+with `QProcess`, because calling `fork()` in a multithreaded Qt program is unsafe.
+
+38. **Why is C-SCAN's wrap distance counted?** The head physically travels back across the disk; our convention
+    counts it (382 for the reference queue). Some books do not - then C-SCAN would be 183.
+
+39. **SCAN vs LOOK?** SCAN goes to the end of the disk before reversing (199 here, nothing serviced there); LOOK
+    reverses at the last request in that direction, so it never travels further (299 vs 331).
+
+40. **Why can SSTF starve a request?** It always takes the nearest one; requests far away can wait as long as new
+    near requests keep arriving.
+
+41. **Why must Waiting -> Running be impossible?** I/O completion only makes the process eligible; the dispatcher
+    decides who gets the CPU, so it goes Waiting -> Ready -> (dispatch) Running. `completeIO()` enforces it.
+
+42. **What does a context switch save?** The CPU state (program counter, registers) into the old process's PCB and
+    loads the new one from its PCB. Our register values are modelled, not real.
+
+43. **Zombie vs orphan?** A zombie has exited but its parent has not called wait() (state Z in /proc). An orphan is
+    still running but its parent has exited; it is re-parented (to a subreaper such as our helper, or to init).
+
+44. **What does exec change?** The program image (code, data, stack); the PID stays the same - the live demo shows
+    the same PID before and after `execl`.
+
+45. **Shared memory vs message passing?** Shared memory maps the same pages into both processes (fast, no copy,
+    but needs synchronization); message passing copies each message through the kernel and synchronizes by itself.
+
+46. **When does read() on a pipe return 0?** Only when the pipe is empty AND every write end is closed. An empty pipe
+    with an open writer blocks instead - so every process must close the ends it does not use.
+
+47. **Internal vs external fragmentation?** Internal: unused space inside an allocated partition (fixed partitions).
+    External: enough free memory in total but no single hole is large enough (426 with First / Worst Fit).
+
+48. **Translate 2500 with 1 KiB pages and page 2 in frame 5.** page = 2500 / 1024 = 2, offset = 452,
+    physical = 5 x 1024 + 452 = 5572.
+
+49. **Page fault vs invalid page?** A page fault is a VALID page that is not in memory (the OS loads it and restarts
+    the instruction); an invalid page is not part of the process (illegal access, the process is stopped).
+
+50. **What is thrashing and how is it seen here?** Fewer frames than the working set: almost every reference
+    faults (cyclic 0-3 with 3 frames: 20 of 20). In the multiprogramming model utilisation collapses once the
+    frames per process drop below the working set.
+
+51. **Is DMA always faster?** No. It costs setup and a completion interrupt; for one unit those are more than one
+    ISR + copy (5 vs 2 ticks). Its benefit is for bulk transfers, where the CPU stays free (94 vs 1 useful ticks).
+
+52. **Polling vs interrupts?** Polling wastes CPU on status checks when the device is slow; interrupts let the CPU
+    work until the device signals, at the cost of an ISR per event.
+
+53. **Why does Many-to-One not use several cores?** All user threads share one kernel context, which the kernel
+    can schedule on only one core at a time; a blocking call blocks that context and so the whole process.
+
+54. **Concurrency vs parallelism?** Concurrency = threads make progress in overlapping time (interleaved on one
+    core, 12 ticks); parallelism = they really run at the same time on several cores (4 ticks).
+
+55. **How does Linux map pthreads?** One-to-one: each pthread is a kernel task with its own TID. Our Many-to-One and
+    Many-to-Many views are teaching models only.
+

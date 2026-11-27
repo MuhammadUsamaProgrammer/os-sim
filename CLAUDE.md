@@ -448,6 +448,17 @@ Rules (same golden rule as the rest of the project):
   states, mutex ownership/hand-off, semaphore limits, buffer boundaries and blocking, monitor wait/signal,
   comparison, validation, reset/determinism, real demos and cancellation. The GUI `--selftest` covers the tab.
 
+## 12. Phase 2 (implemented): advanced visualization modules
+
+Specification: `OS_SIM_PHASE_2_IMPLEMENTATION.md` (root). Module documentation: `docs/PHASE2_MODULES.md`.
+New core models (pure, deterministic): `disk.*`, `procmgmt.*` (reuses `schedulerPick`), `ipc.*`, `memadv.*`
+(reuses `FramePool` / `runPageReplacement`), `iomodel.*`, `threads.*`. GUI: `ModuleKit.*` (shared PlaybackBar etc.),
+`NativeRunner.*`, `DiskTab`, `ProcessTab`, `IpcTab`, `IoTab`, `ThreadsTab`, `MemAdvTab` (Memory area).
+Live Linux demos live only in `apps/ossim_helper.cpp` (single-threaded, QProcess, own process group, bounded waits,
+owned IPC objects removed). Tests: `test_disk`, `test_procmgmt`, `test_io`, `test_memadv`, `test_ipc`,
+`test_threads`, `test_native`. Rules: views only display model snapshots; playback speed never changes results;
+input changes rebuild the trace; a manual command after Prev starts a new branch; never block the GUI thread.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.
@@ -459,6 +470,7 @@ Rules (same golden rule as the rest of the project):
 - [ ] `README.md`, `docs/REPORT.md`, `docs/VIVA_NOTES.md`, `PROGRESS.md` exist and are accurate.
 - [ ] Git history has one commit per stage.
 - [ ] Stage 11: the Synchronization tab works, `test_sync` and `test_sync_engine` pass, TSAN/ASAN clean.
+- [ ] Phase 2: all six modules work from real models, the 7 Phase 2 test programs and the GUI selftest pass.
 
 ---
 
