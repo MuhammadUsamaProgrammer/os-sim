@@ -14,6 +14,7 @@ Read this first after a session restart; continue from the first unfinished stag
 | 8 | GUI: Deadlock tab + RAG | DONE |
 | 9 | Integration + export | DONE |
 | 10 | Polish, docs, final verification | DONE |
+| 11 | Extension: process synchronization module | DONE |
 
 ## Environment
 Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Charts found).
@@ -132,9 +133,39 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
 - Docs: `README.md`, `docs/REPORT.md`, `docs/VIVA_NOTES.md` (concepts + 25 questions),
   `docs/screenshots/README.md` (8 screenshots to take, with steps).
 
+## Stage 11: Extension - Process Synchronization module
+- Built:
+  - `core/sync.*` (pure, deterministic): `SyncSim` executes one pseudocode line per `step(pid)` for
+    race condition, Peterson (lecture variant, 2 processes), mutex, binary / counting semaphore,
+    producer-consumer (empty/full/mutex) and monitor (Mesa, notFull/notEmpty). Scheduler: scenario script,
+    then round robin (k instructions per turn, producer/consumer speeds) or seeded random. Stats: expected vs
+    actual, lost updates, CS violations, max inside, CS entries, busy-wait / blocked steps, overflows,
+    completion. `syncScenarios()` (2-4 samples per algorithm), `compareSync()` (same 2-process workload:
+    unsynchronized / Peterson / mutex / binary semaphore), `syncExplanation()`, `syncGuarantee()`.
+  - `engine/sync_demo.*`: `SyncDemoRunner` - real pthreads for every primitive (split atomic load/store race,
+    Peterson with seq_cst `std::atomic`, `pthread_mutex`, `sem_t` binary/counting, producer-consumer with
+    `sem_t` + mutex, monitor with `pthread_cond`), PipeLogger IPC, result checks, `cancel()` that wakes
+    blocked threads (sem_post cascade / cond broadcast) so a cancelled run always joins.
+  - `gui/SyncTab.*`, `gui/SyncViews.*` (SyncView animated scene, CodeView pseudocode, SyncTimeline),
+    `gui/SyncBridge.*` (std::thread + queued signals). New main tab "Synchronization": algorithm + scenario,
+    parameters, Run/Pause/Resume/Step/Stop/Reset/Run to end, speed slider, process cards with per-process
+    Step (manual interleaving), live variables, timeline, event log, statistics (theory vs observed),
+    comparison page (table + bar chart), real POSIX demo page, explanation panel.
+  - MainWindow: tab, log, export sections `=== Synchronization` / `## Synchronization`,
+    `## Synchronization comparison`, `## Synchronization POSIX demo`; self-test extended (about 50 checks).
+  - Console: `ossim_console sync [--real]`.
+- Tests: `test_sync` (1068 checks, incl. exhaustive Peterson state search: 1211 states) and
+  `test_sync_engine` (72 checks, incl. cancellation under a watchdog). ctest now has 7 tests.
+- Sanitizers: TSAN build of test_sync + test_sync_engine (3 runs): no report. ASAN+UBSAN: ctest 7/7 and the
+  whole GUI `--selftest` exit 0, no report.
+- Run: `cd build && ./gui/ossim` -> Synchronization tab; `./build/apps/ossim_console sync --real`.
+- Notes: simulated queues are FIFO (POSIX promises no order - stated in the GUI and docs). The animation is
+  driven by a QTimer stepping the core model (deterministic); real concurrency is in the POSIX demo page.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
+- [x] Section 11 (synchronization extension): every algorithm simulated, tested, in the GUI and documented.
 - [x] `./gui/ossim` launches; all three tabs work; bad input shows warnings; `--selftest` exits 0 offscreen.
 - [x] Engine uses pthread_create/join, pthread_mutex_*, sem_init/wait/post/destroy, pthread_cond_* and pipe();
       20 runs give byte-identical logs.

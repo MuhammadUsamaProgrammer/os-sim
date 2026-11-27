@@ -37,6 +37,9 @@ Start now by reading `PROPOSAL.md` if it exists (it is only background; this fil
 - Each simulated process runs as a POSIX thread, synchronized with mutexes and semaphores and a common simulation clock.
 - One tab-based GUI with side-by-side algorithm comparison and exportable results.
 
+**Extension (Stage 11):** a fourth tab, **Synchronization** (race condition, Peterson's solution, mutex locks,
+binary and counting semaphores, producer-consumer, monitors with condition variables). See Section 11.
+
 **OS concepts that must visibly appear in the code** (the examiner will look for these):
 
 | Concept | Where / how |
@@ -48,6 +51,7 @@ Start now by reading `PROPOSAL.md` if it exists (it is only background; this fil
 | Memory management | Paging, page tables, frame allocation, FIFO/LRU/Optimal |
 | Deadlocks | Banker's safety and request algorithms, detection, recovery by termination |
 | IPC | `pipe()` used by worker threads to send log lines to the logger/GUI |
+| Process synchronization | `core/sync.*` step simulation (race, Peterson, mutex, semaphores, producer-consumer, monitor); `engine/sync_demo.*` real pthread / `sem_t` / `pthread_cond` / `std::atomic` demos |
 
 ---
 
@@ -424,6 +428,26 @@ Done when: the Definition of done below is all true.
 
 ---
 
+## 11. Stage 11: Process synchronization extension (implemented)
+
+Files: `core/sync.h/.cpp`, `engine/sync_demo.h/.cpp`, `gui/SyncTab.*`, `gui/SyncViews.*`, `gui/SyncBridge.*`,
+`tests/test_sync.cpp`, `tests/test_sync_engine.cpp`; console command `ossim_console sync [--real]`.
+
+Rules (same golden rule as the rest of the project):
+- `core/sync.*` is pure and deterministic: `SyncSim::step(pid)` executes exactly one pseudocode line, so every
+  interleaving is reproducible (manual Step per process, scenario script, round robin, seeded random). The race
+  condition is modelled by interleaving read / modify / write - never by unsynchronized C++ variables.
+- Peterson must stay the lecture variant: `other = 1 - process; interested[process] = true; turn = process;
+  while (interested[other] == true && turn == process);` ... `interested[process] = false;` (2 processes only).
+  Real-thread versions use `std::atomic` with sequentially consistent ordering.
+- `engine/sync_demo.*` runs real pthreads (`pthread_mutex`, `sem_init/wait/post/destroy`, `pthread_cond_*`),
+  logs through `PipeLogger`, checks its result, and `cancel()` must always let `run()` join (no hang).
+- The GUI animates with a `QTimer` (one instruction per tick); the real demo runs on a `std::thread` via
+  `SyncBridge` with queued signals. Simulated waiting queues are FIFO; say clearly that POSIX gives no order.
+- Tests: lost update (counter 1 of 2), synchronized counters exact, Peterson mutual exclusion over all reachable
+  states, mutex ownership/hand-off, semaphore limits, buffer boundaries and blocking, monitor wait/signal,
+  comparison, validation, reset/determinism, real demos and cancellation. The GUI `--selftest` covers the tab.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.
@@ -434,6 +458,7 @@ Done when: the Definition of done below is all true.
 - [ ] Export writes `.txt` and `.csv` with all sections.
 - [ ] `README.md`, `docs/REPORT.md`, `docs/VIVA_NOTES.md`, `PROGRESS.md` exist and are accurate.
 - [ ] Git history has one commit per stage.
+- [ ] Stage 11: the Synchronization tab works, `test_sync` and `test_sync_engine` pass, TSAN/ASAN clean.
 
 ---
 

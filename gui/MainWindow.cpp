@@ -26,6 +26,7 @@
 #include "MemoryTab.h"
 #include "SchedulingTab.h"
 #include "Style.h"
+#include "SyncTab.h"
 #include "Theme.h"
 
 // Creates the tabs, the log dock (read-only, monospace) and the menus.
@@ -37,9 +38,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sched_ = new SchedulingTab;
     mem_ = new MemoryTab;
     dead_ = new DeadlockTab;
+    sync_ = new SyncTab;
     tabs_->addTab(sched_, "Scheduling");
     tabs_->addTab(mem_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
+    tabs_->addTab(sync_, "Synchronization");
     setCentralWidget(tabs_);
 
     log_ = new QPlainTextEdit;
@@ -56,6 +59,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(sched_, &SchedulingTab::logMessage, this, &MainWindow::appendLog);
     connect(mem_, &MemoryTab::logMessage, this, &MainWindow::appendLog);
     connect(dead_, &DeadlockTab::logMessage, this, &MainWindow::appendLog);
+    connect(sync_, &SyncTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -155,7 +159,7 @@ bool MainWindow::loadSample(const QString& path) {
 void MainWindow::showAbout() {
     QMessageBox::about(this, "About OS-Sim",
         "<h3>OS-Sim: An Integrated Operating System Simulator</h3>"
-        "<p>CPU Scheduling, Memory Management and Deadlock Detection with a GUI.</p>"
+        "<p>CPU Scheduling, Memory Management, Deadlock Detection and Process Synchronization with a GUI.</p>"
         "<p>Operating System Lab, BS (IT) semester 5, Bahria University<br>"
         "Instructor: Amarah Abdullah</p>"
         "<p><b>Group NBA</b><br>"
@@ -292,7 +296,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 6. Deadlock
     T << "\n=== Deadlock ===\n" << dead_->reportText();
     C << "\n" << dead_->csvSection();
-    // 7. Event log
+    // 7. Process synchronization
+    T << "\n=== Synchronization ===\n" << sync_->reportText();
+    C << "\n" << sync_->csvSection();
+    // 8. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -325,7 +332,9 @@ static void shot(QWidget* w, const QString& name) {
     QString dir = qEnvironmentVariable("OSSIM_SHOTS");
     if (dir.isEmpty()) return;
     QDir().mkpath(dir);
-    QApplication::processEvents();
+    QElapsedTimer t;                      // let animations (sync chips) finish first
+    t.start();
+    while (t.elapsed() < 450) { QApplication::processEvents(QEventLoop::AllEvents, 20); QThread::msleep(5); }
     w->grab().save(dir + "/" + name + ".png");
 }
 
@@ -468,6 +477,105 @@ int MainWindow::runSelfTest() {
     stCheck(!sched_->runIntegrated() && ui::warningCount() == w + 1, "missing requests file -> warning");
     sched_->setIntegratedOptions(sd + "/requests_integrated.csv", true, true, 6, 5);
 
+    // Synchronization: every algorithm and scenario, lost update, Peterson, controls, comparison, real threads
+    tabs_->setCurrentWidget(sync_);
+    for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a) {
+        sync_->setAlgorithm((SyncAlgo)a);
+        int n = (int)syncScenarios((SyncAlgo)a).size();
+        for (int i = 0; i < n; ++i) {
+            bool ok = sync_->loadScenario(i) && sync_->runToEnd() > 0 && sync_->sim()->stats().completed;
+            if ((SyncAlgo)a != SyncAlgo::RACE) ok = ok && sync_->sim()->stats().csViolations == 0 && sync_->sim()->stats().lostUpdates == 0;
+            stCheck(ok, QString("sync %1, scenario %2 completes correctly").arg(syncAlgoName((SyncAlgo)a)).arg(i + 1));
+        }
+    }
+    sync_->setAlgorithm(SyncAlgo::RACE);
+    stCheck(sync_->loadScenario(0) && sync_->runToEnd() == 6 && sync_->sim()->stats().actual == 1 &&
+            sync_->sim()->stats().lostUpdates == 1, "race: lost update, counter 1 instead of 2");
+    shot(this, "sync_race_lost_update");
+    {   // manual interleaving through the process cards' Step action
+        SyncConfig c;
+        c.algo = SyncAlgo::RACE;
+        c.processes = 2;
+        c.iterations = 1;
+        stCheck(sync_->applyConfig(c), "race: custom configuration");
+        bool ok = true;
+        for (int p : {0, 1, 0, 0, 1, 1}) ok = ok && sync_->stepProcess(p);
+        stCheck(ok && sync_->sim()->counter() == 1 && !sync_->stepProcess(0), "race: manual interleaving P0 P1 P0 P0 P1 P1 loses an update");
+    }
+    sync_->setAlgorithm(SyncAlgo::PETERSON);
+    stCheck(sync_->loadScenario(0), "Peterson: both want to enter");
+    for (int i = 0; i < 9; ++i) sync_->stepOnce();
+    stCheck(sync_->sim()->procs()[0].inCS && sync_->sim()->procs()[1].state == SyncProcState::Spinning,
+            "Peterson: P0 in the critical section, P1 busy-waits");
+    shot(this, "sync_peterson");
+    sync_->runToEnd();
+    stCheck(sync_->sim()->stats().completed && sync_->sim()->stats().csViolations == 0 && sync_->sim()->counter() == 2,
+            "Peterson: mutual exclusion, counter 2");
+    sync_->setAlgorithm(SyncAlgo::PRODUCER_CONSUMER);
+    stCheck(sync_->loadScenario(0), "producer-consumer: fast producer");
+    // The producer (pid 0) must end up asleep on the "empty" semaphore (object 0) when empty == 0 (no free slot).
+    for (int i = 0; i < 200 && sync_->sim()->procs()[0].waitingOn != 0; ++i) sync_->stepOnce();
+    stCheck(sync_->sim()->procs()[0].state == SyncProcState::Blocked && sync_->sim()->procs()[0].waitingOn == 0 &&
+            sync_->sim()->objects()[0].value == 0, "producer-consumer: producer blocks on wait(empty) when empty = 0");
+    for (int i = 0; i < 200 && !(sync_->sim()->procs()[0].waitingOn == 0 && sync_->sim()->bufferCount() == 3); ++i)
+        sync_->stepOnce();
+    stCheck(sync_->sim()->bufferCount() == 3 && sync_->sim()->procs()[0].state == SyncProcState::Blocked,
+            "producer-consumer: buffer full (3 of 3), producer asleep");
+    shot(this, "sync_producer_consumer");
+    sync_->setAlgorithm(SyncAlgo::MONITOR);
+    stCheck(sync_->loadScenario(1), "monitor: fast consumer");
+    for (int i = 0; i < 10; ++i) sync_->stepOnce();
+    shot(this, "sync_monitor");
+    // Animated run: run, pause, resume, stop, reset - never hangs.
+    sync_->setAlgorithm(SyncAlgo::MUTEX);
+    sync_->setSpeed(50);
+    sync_->run();
+    stCheck(sync_->animating(), "sync: animated run starts");
+    stCheck(waitFor([&] { return sync_->sim()->stats().steps >= 4; }, 5000), "sync: animation advances");
+    sync_->pause();
+    int stepsAtPause = sync_->sim()->stats().steps;
+    waitFor([] { return false; }, 200);
+    stCheck(!sync_->animating() && sync_->sim()->stats().steps == stepsAtPause, "sync: pause stops the animation");
+    sync_->resume();
+    stCheck(waitFor([&] { return sync_->sim()->stats().steps > stepsAtPause; }, 5000), "sync: resume continues");
+    sync_->stop();
+    stCheck(!sync_->animating(), "sync: stop");
+    stCheck(sync_->resetSim() && sync_->sim()->stats().steps == 0, "sync: reset");
+    sync_->run();
+    stCheck(waitFor([&] { return sync_->sim()->finished(); }, 15000), "sync: animated run to the end");
+    stCheck(sync_->sim()->stats().completed && sync_->sim()->stats().lostUpdates == 0, "sync: mutex result correct");
+    // Bad input: more consumers than items -> warning, no crash
+    w = ui::warningCount();
+    {
+        SyncConfig bad;
+        bad.algo = SyncAlgo::PRODUCER_CONSUMER;
+        bad.producers = 1; bad.consumers = 3; bad.iterations = 1;
+        stCheck(!sync_->applyConfig(bad) && ui::warningCount() == w + 1, "sync: invalid settings -> warning");
+    }
+    // Comparison of the four mechanisms
+    stCheck(sync_->compare() && sync_->lastComparison().size() == 4, "sync: comparison has 4 rows");
+    {
+        const auto& r = sync_->lastComparison();
+        bool ok = r[0].stats.lostUpdates > 0;
+        for (int i = 1; i < 4; ++i) ok = ok && r[i].stats.lostUpdates == 0 && r[i].stats.csViolations == 0 && r[i].stats.completed;
+        stCheck(ok, "sync: unsynchronized loses updates, Peterson / mutex / semaphore do not");
+    }
+    shot(this, "sync_comparison");
+    // Real POSIX threads (background thread + queued signals)
+    sync_->setAlgorithm(SyncAlgo::MUTEX);
+    stCheck(sync_->runRealDemo(), "sync: real pthread_mutex demo starts");
+    stCheck(waitFor([&] { return !sync_->realDemoRunning(); }, 20000), "sync: real demo finishes");
+    stCheck(sync_->lastDemo() && sync_->lastDemo()->ok, "sync: real mutex demo checks pass");
+    sync_->setAlgorithm(SyncAlgo::PRODUCER_CONSUMER);
+    stCheck(sync_->runRealDemo(), "sync: real producer-consumer demo starts");
+    waitFor([] { return false; }, 150);
+    sync_->stopRealDemo();
+    stCheck(waitFor([&] { return !sync_->realDemoRunning(); }, 5000), "sync: real demo stops on request");
+    sync_->setAlgorithm(SyncAlgo::MONITOR);
+    stCheck(sync_->runRealDemo() && waitFor([&] { return !sync_->realDemoRunning(); }, 20000) &&
+            sync_->lastDemo()->ok, "sync: real monitor demo (pthread_cond) checks pass");
+    shot(this, "sync_posix_demo");
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -485,9 +593,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");

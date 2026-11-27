@@ -1,5 +1,5 @@
 // console_main.cpp - console demo of OS-Sim (executable ossim_console).
-// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real]]
+// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]
 // With no arguments it runs every demo on the sample files.
 #include <cstdio>
 #include <iostream>
@@ -9,6 +9,8 @@
 #include "memory.h"
 #include "deadlock.h"
 #include "engine.h"
+#include "sync.h"
+#include "sync_demo.h"
 
 // Prints a text Gantt chart such as |P1......|P2..| with a time ruler.
 static void printGantt(const SchedResult& r) {
@@ -142,6 +144,45 @@ static Algo algoFromName(const std::string& n) {
     return Algo::FCFS;
 }
 
+// Synchronization: the lost-update race step by step, every scenario's result, the
+// comparison of the four mechanisms, and (with real = true) the real pthread demos.
+static void demoSync(bool real) {
+    std::cout << "=== Race condition: textbook interleaving (one line per step) ===\n";
+    SyncSim race(syncScenarios(SyncAlgo::RACE)[0].cfg);
+    race.runToEnd();
+    for (const std::string& l : race.log()) std::cout << "  " << l << "\n";
+    std::cout << "\n=== Sample scenarios ===\n";
+    for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a)
+        for (const SyncScenario& sc : syncScenarios((SyncAlgo)a)) {
+            SyncSim s(sc.cfg);
+            s.runToEnd();
+            SyncStats st = s.stats();
+            std::printf("  %-36s %-50s expected %3d actual %3d lost %2d violations %2d waiting %3d %s\n",
+                        syncAlgoName((SyncAlgo)a), sc.name.c_str(), st.expected, st.actual, st.lostUpdates,
+                        st.csViolations, st.waitingSteps(), st.completed ? "done" : "STUCK");
+        }
+    std::cout << "\n=== Comparison: 2 processes x 3 increments, round robin, 1 instruction per turn ===\n";
+    for (const SyncComparisonRow& r : compareSync(3, 1, false, 1))
+        std::printf("  %-18s expected %d actual %d lost %d violations %d waiting %d (busy %d, blocked %d) entries %d\n",
+                    r.label.c_str(), r.stats.expected, r.stats.actual, r.stats.lostUpdates, r.stats.csViolations,
+                    r.stats.waitingSteps(), r.stats.busyWaitSteps, r.stats.blockedSteps, r.stats.csEntries);
+    if (!real) return;
+    std::cout << "\n=== Real POSIX threads ===\n";
+    SyncDemoRunner runner;
+    SyncDemoParams p;
+    p.items = 10;
+    p.delayUs = 1000;
+    for (int k = 0; k <= (int)SyncDemoKind::MONITOR; ++k) {
+        SyncDemoParams q = p;
+        if ((SyncDemoKind)k == SyncDemoKind::COUNTING_SEM) { q.iterations = 4; q.threads = 5; }
+        if ((SyncDemoKind)k == SyncDemoKind::PETERSON) q.iterations = 5000;
+        if ((SyncDemoKind)k != SyncDemoKind::COUNTING_SEM && (SyncDemoKind)k < SyncDemoKind::PRODUCER_CONSUMER) q.delayUs = 0;
+        SyncDemoResult r = runner.run((SyncDemoKind)k, q);
+        std::printf("  %-46s %s  [%s, %.1f ms]\n", syncDemoName((SyncDemoKind)k), r.summary.c_str(),
+                    (SyncDemoKind)k == SyncDemoKind::RACE ? "demo" : r.ok ? "OK" : "FAILED", r.millis);
+    }
+}
+
 int main(int argc, char** argv) {
     std::string cmd = argc > 1 ? argv[1] : "all";
     try {
@@ -168,13 +209,15 @@ int main(int argc, char** argv) {
             demoEngine(pos.size() > 0 ? pos[0] : "samples/processes_fcfs.csv",
                        algoFromName(pos.size() > 1 ? pos[1] : "fcfs"),
                        pos.size() > 2 ? std::stoi(pos[2]) : 4, real);
+        } else if (cmd == "sync") {
+            demoSync(argc > 2 && std::string(argv[2]) == "--real");
         } else if (cmd == "all") {
             for (const char* f : {"samples/processes_fcfs.csv", "samples/processes_srtf.csv",
                                   "samples/processes_priority.csv"}) demoScheduling(f, 4);
             demoMemory(readTextFile("samples/refstring_standard.txt"), 3);
             demoDeadlock("samples/banker_sample.txt", "samples/deadlock_sample.txt");
         } else {
-            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real]]\n";
+            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]\n";
             return 2;
         }
     } catch (const std::exception& e) {

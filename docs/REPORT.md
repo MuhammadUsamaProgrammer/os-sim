@@ -1,5 +1,8 @@
 # OS-Sim: An Integrated Operating System Simulator for CPU Scheduling, Memory Management and Deadlock Detection with a GUI
 
+*(extended with a Process Synchronization module: race conditions, Peterson's solution, mutex locks,
+semaphores, producer-consumer and monitors)*
+
 **Course:** Operating System Lab, BS (IT) semester 5, Bahria University
 **Instructor:** Amarah Abdullah
 **Group NBA:** Aagha Ali Hassan (03-135242-007), Hamza Malik (03-135242-021), Muhammad Usama (03-135242-038)
@@ -15,6 +18,10 @@ application. The user creates processes, runs them through six schedulers, watch
 replacement frame by frame, and avoids, detects and recovers from deadlocks, all with the same
 process list. An animated mode replays a schedule with real POSIX threads and synchronisation
 primitives, and an integrated mode runs scheduling, paging and resource allocation together.
+A fourth tab, **Synchronization**, shows why concurrent processes need synchronization: it executes
+race conditions, Peterson's solution, mutex locks, semaphores, the producer-consumer problem and
+monitors one instruction at a time, lets the user choose the interleaving, and runs the same
+primitives with real POSIX threads.
 
 ## 2. Objectives
 
@@ -25,8 +32,11 @@ primitives, and an integrated mode runs scheduling, paging and resource allocati
    processes, and recovery by process termination.
 4. Run each simulated process as a POSIX thread synchronised with mutexes, semaphores and a common clock.
 5. Provide one tab-based GUI with side-by-side algorithm comparison and exportable results.
+6. (Extension) Simulate process synchronization (race condition, Peterson, mutex, binary and
+   counting semaphores, producer-consumer, monitors) step by step, compare the mechanisms, and
+   demonstrate each primitive with real threads.
 
-All five objectives are met (see Section 7).
+All six objectives are met (see Section 7).
 
 ## 3. OS concepts used (concept → file → function)
 
@@ -47,6 +57,13 @@ All five objectives are met (see Section 7).
 | Deadlock detection | `core/deadlock.cpp`: `detectDeadlock()`, `buildRag()` | multi-instance detection algorithm; RAG with DFS cycle search |
 | Deadlock recovery | `core/deadlock.cpp`: `recoverByTermination()` | kill the deadlocked process with the lowest total allocation, release, re-detect |
 | Integration | `core/integrated.cpp`: `runIntegrated()` | scheduler + shared frame pool + scripted resource requests + periodic detection |
+| Race condition / critical section | `core/sync.cpp`: `SyncSim::step()` (`Op::Read/Inc/Write`), `enterCS()`; `engine/sync_demo.cpp`: `raceBody()` | counter++ split into read, modify, write; lost updates and critical-section violations are counted; the real demo uses a separate atomic load and store (no undefined behaviour) |
+| Peterson's solution | `core/sync.cpp`: `Op::SetInterested`, `Op::SetTurn`, `Op::PetersonWait`; `engine/sync_demo.cpp`: `petersonBody()` | lecture variant (`turn = process; while (interested[other] && turn == process);`), busy waiting; real version with `std::atomic` seq_cst |
+| Mutex locks | `core/sync.cpp`: `Op::Lock/Unlock`, `release()` (FIFO hand-off); `engine/sync_demo.cpp`: `mutexBody()` | owner, waiting queue, `pthread_mutex_lock/unlock` with real threads |
+| Binary / counting semaphores | `core/sync.cpp`: `Op::SemWait/SemSignal`; `engine/sync_demo.cpp`: `semBody()` | value, FIFO waiting queue, wake-up on signal; `sem_init`, `sem_wait`, `sem_post`, `sem_destroy` |
+| Producer-consumer | `core/sync.cpp` (programs with `empty`, `full`, `mutex`); `engine/sync_demo.cpp`: `producerBody()`, `consumerBody()` | bounded buffer, blocking on full / empty, overflow and underflow checks |
+| Monitors, condition variables | `core/sync.cpp`: `Op::MonEnter/MonExit/CondWhile/CondWait/CondSignal`; `engine/sync_demo.cpp`: `monitorInsert()`, `monitorRemove()` | Mesa semantics (signalled process re-enters through the entry queue and re-checks its while condition); `pthread_cond_wait/signal/broadcast` |
+| Safe cancellation | `engine/sync_demo.cpp`: `SyncDemoRunner::cancel()`; `gui/SyncBridge.cpp` | flag + `sem_post` / `pthread_cond_broadcast` wakes every blocked thread, then `pthread_join` |
 
 ## 4. System design
 
@@ -58,7 +75,9 @@ The design follows one rule: **`core/` calculates, `engine/` replays with thread
  |  SchedulingTab  (GanttWidget, BarChartWidget, Integrated-run panel)                               |
  |  MemoryTab      (frame tables, BarChartWidget, page-table panel)                                  |
  |  DeadlockTab    (matrices, RagView)                                                               |
+ |  SyncTab        (SyncView, CodeView, SyncTimeline, comparison, real demo page)                   |
  |  EngineBridge   (engine observer -> queued Qt signal -> GUI thread)                               |
+ |  SyncBridge     (sync demo on a std::thread -> queued Qt signals -> GUI thread)                  |
  +-------------------+--------------------------------------------------+-------------------------+
                      | result structs                                   | events (queued signals)
                      v                                                  |
@@ -68,11 +87,13 @@ The design follows one rule: **`core/` calculates, `engine/` replays with thread
  |  deadlock:  bankersSafety/Request, detectDeadlock,          |   |   N process threads            |
  |             recoverByTermination, buildRag                  |   |   mutex, sem_t, cond var       |
  |  integrated: runIntegrated                                  |   | PipeLogger (pipe IPC)          |
- |  io_formats: CSV / matrix / requests loaders                |   | realProcessDemo (fork/exec)    |
+ |  sync:      SyncSim (one pseudocode line per step),         |   | realProcessDemo (fork/exec)    |
+ |             syncScenarios, compareSync                      |   | SyncDemoRunner (real pthreads, |
+ |  io_formats: CSV / matrix / requests loaders                |   |   mutex, sem_t, cond, atomics) |
  +-------------------------------------------------------------+   +--------------------------------+
             ^                                                               ^
             |                 apps/console_main.cpp (ossim_console)         |
-            +---------------- tests/ (5 programs, ctest) -------------------+
+            +---------------- tests/ (7 programs, ctest) -------------------+
 ```
 
 Why `core/` has no threads: the algorithms must give exactly the textbook numbers on every run,
@@ -175,9 +196,41 @@ observer callback into a signal delivered with a queued connection to the GUI th
 threads never touch widgets. Each run has a generation number so stale queued events are ignored.
 Every input is validated and errors are shown with `QMessageBox::warning`.
 
+### 5.7 Process synchronization (`core/sync.cpp`, `engine/sync_demo.cpp`, `gui/Sync*`)
+**Simulation (`core/`).** Every process runs a small program of pseudocode lines (`Instr`: operation,
+synchronization object, text, enter/leave critical-section flags). `SyncSim::step(pid)` executes exactly
+one line of one process, so any interleaving can be reproduced: by the user (the Step button on a process
+card), by a scenario script, or by a deterministic scheduler (round robin with *k* instructions per turn,
+or `std::mt19937` with a fixed seed). Shared memory (counter, `interested[]`, `turn`, buffer, in/out/count)
+is plain data inside `SyncSim`; because one line runs at a time there is no real data race - the race is
+modelled by the interleaving. Objects (`SyncObject`) are mutexes (owner + FIFO queue), semaphores
+(value + FIFO queue), a monitor (owner + entry queue) and condition variables (queue). A blocked process
+uses no CPU; a Peterson process that fails its while test stays runnable and is counted as a busy-wait step.
+Entering a critical section that is already full is counted as a violation. `stats()` gives expected vs
+actual, lost updates (= increments written - counter), violations, maximum occupancy, entries, busy-wait
+and blocked steps, overflows/underflows and completion. `compareSync()` runs the same two-process counter
+workload unsynchronized, with Peterson, with a mutex and with a binary semaphore.
+
+**Real threads (`engine/`).** `SyncDemoRunner::run()` creates one `pthread` per worker, runs the chosen
+primitive, joins all threads and checks the result (exact counter, at most one / S threads inside, every
+item consumed exactly once, checksums, no overflow/underflow). The race demo uses an atomic load followed by
+a separate atomic store, so updates are lost without undefined behaviour. Peterson uses `std::atomic` with
+the default sequentially consistent ordering (plus `sched_yield()` while spinning). Worker log lines go
+through `PipeLogger` (pipe IPC); the thread that called `run()` is the dispatcher. `cancel()` sets a flag
+and wakes every sleeper (`sem_post` with a hand-on cascade, `pthread_cond_broadcast` under the monitor lock),
+so a cancelled run always joins.
+
+**GUI.** `SyncTab` drives the simulation with a `QTimer` (one instruction per tick, so the GUI never blocks)
+and shows: process cards (state badge, next line, register/item, queue, per-card Step), `SyncView` (animated
+chips moving between entry lane, busy-wait lane, critical section, finished lane and the queue of the object
+they sleep on; bounded buffer slots with in/out), `CodeView` (pseudocode with the next line of each process
+and the line just executed), a live variable table (changed values highlighted), `SyncTimeline`, the event
+log, statistics with *theory vs observed*, the comparison page (table + bar chart) and the real-demo page.
+`SyncBridge` runs the real demo on a `std::thread` and forwards lines with queued signals.
+
 ## 6. Testing
 
-`ctest` runs five programs. All checks pass with zero compiler warnings (`-Wall -Wextra`):
+`ctest` runs seven programs. All checks pass with zero compiler warnings (`-Wall -Wextra`):
 
 ```
 test_scheduler: 54 checks, 0 failures
@@ -185,7 +238,9 @@ test_memory: 26 checks, 0 failures
 test_deadlock: 38 checks, 0 failures
 test_engine: 34 checks, 0 failures
 test_integrated: 44 checks, 0 failures
-100% tests passed, 0 tests failed out of 5
+test_sync: 1068 checks, 0 failures
+test_sync_engine: 72 checks, 0 failures
+100% tests passed, 0 tests failed out of 7
 ```
 
 ### 6.1 Scheduler acceptance tests
@@ -240,12 +295,34 @@ With `processes_srtf.csv`, RR q=2, 6 frames LRU and `requests_integrated.csv`: a
 the others finish. Without auto-recover the run stops in the deadlock. The logs are identical over
 10 runs, and all 6 schedulers × 3 page algorithms complete with 26 memory references.
 
-### 6.6 Sanitizers and GUI smoke test
-- `-DSANITIZE=thread`: all 5 test programs pass, no ThreadSanitizer report.
+### 6.6 Synchronization tests (`test_sync`, `test_sync_engine`)
+
+| Case | Expected | Result |
+|---|---|---|
+| Race, order P0 R, P1 R, P0 I, P0 W, P1 I, P1 W | counter 1, expected 2, 1 lost update, 1 violation | pass |
+| Race, serial order / 3 instructions per turn | counter correct, nothing lost | pass |
+| Race, 3 processes x 3, 1 instruction per turn | updates lost; identical log on every run | pass |
+| Peterson, mutex, binary semaphore, 1-5 processes, slices 1-4, 30 random seeds | counter = n x iterations, 0 violations, completed | pass |
+| Peterson, **all reachable states** (breadth-first search, 2 x 2 iterations, 1211 states) | never 2 in the critical section, never stuck, final counter 4 | pass |
+| Peterson progress (P0 alone) / bounded waiting (200 random runs) | P0 never waits / the other enters at most once while one waits | pass |
+| Mutex ownership | owner, FIFO queue, hand-off to the first waiter, free at the end | pass |
+| Binary semaphore / counting semaphore S = 2 with 5 processes | value in [0, 1] / [0, 2]; at most 1 / 2 inside; all permits returned | pass |
+| Producer-consumer and monitor, fast producer / fast consumer / 40 random runs | producer blocks on full, consumer blocks on empty, no overflow/underflow, every item consumed | pass |
+| Monitor | wait releases the monitor, signal moves the waiter to the entry queue, it re-checks `while` | pass |
+| Comparison | unsynchronized loses updates; Peterson busy-waits; mutex sleeps; others correct | pass |
+| Validation, reset, repeated runs | bad settings throw `std::invalid_argument`; a reset run gives the identical log | pass |
+| Real threads: mutex, binary semaphore, Peterson (seq_cst) | exact counter, max 1 thread inside | pass |
+| Real threads: counting semaphore, producer-consumer, monitor | at most S inside; 120 of 120 items, equal checksums | pass |
+| Cancellation while threads are blocked (6 primitives x 2), then run again | `run()` returns (watchdog), runner reusable | pass |
+
+### 6.7 Sanitizers and GUI smoke test
+- `-DSANITIZE=thread`: all test programs pass (including the real synchronization demos), no ThreadSanitizer report.
 - `-DSANITIZE=address` (address + undefined): all tests pass and the whole GUI `--selftest` exits 0 with no report.
 - `QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest` loads every sample, runs every action
   (including the animated engine run, recovery, integrated run and export) and the invalid-input
-  cases, and exits with code 0.
+  cases, and exits with code 0. It also runs every synchronization algorithm and scenario, the manual
+  lost-update interleaving, Peterson busy waiting, producer blocking, Run/Pause/Resume/Stop/Reset,
+  the comparison, and real POSIX demos including a cancelled one.
 
 ## 7. Results and algorithm comparison (real output)
 
@@ -317,6 +394,30 @@ practical algorithms here.
 Avoidance costs waiting time: P2 waits from t=3 to t=19 because granting B would make the state
 unsafe. Without avoidance the system deadlocks and recovers only by killing P1, which loses P1's work.
 
+### 7.5 Process synchronization (`ossim_console sync --real`)
+
+Comparison, 2 processes x 3 increments, round robin, 1 instruction per turn:
+
+| Mechanism | Expected | Actual | Lost updates | CS violations | Waiting steps (busy / blocked) | CS entries |
+|---|---|---|---|---|---|---|
+| Unsynchronized | 6 | 3 | 3 | 3 | 0 (0 / 0) | 6 |
+| Peterson | 6 | 6 | 0 | 0 | 8 (8 / 0) | 6 |
+| Mutex lock | 6 | 6 | 0 | 0 | 16 (0 / 16) | 6 |
+| Binary semaphore | 6 | 6 | 0 | 0 | 16 (0 / 16) | 6 |
+
+Peterson waits by spinning (the CPU is wasted); the mutex and the semaphore put the waiter to sleep
+(no CPU used, but more steps counted while asleep). The unsynchronized version is faster but wrong.
+
+Sample scenarios: lost update -> counter 1 of 2; 3 processes x 3 increments with fine-grained switching
+-> counter 3 of 9 (6 lost); every Peterson, mutex, semaphore, producer-consumer and monitor scenario
+finishes with the expected result and 0 violations (e.g. 5 processes sharing 2 printers: never more than
+2 inside; fast producer: the producer sleeps on `empty` while the buffer is full).
+
+Real threads (one run on the 2-core VM; the interleaving differs between runs): split atomic
+load/store with 4 threads x 20000 lost 8202 of 80000 updates; Peterson 10000 of 10000; `pthread_mutex`
+and `sem_t` 80000 of 80000 with at most one thread inside; counting semaphore at most 2 at once;
+producer-consumer and monitor 20 of 20 items with equal checksums.
+
 ## 8. Limitations
 
 - The animated engine **replays** a precomputed schedule; the threads do not make scheduling
@@ -330,7 +431,13 @@ unsafe. Without avoidance the system deadlocks and recovers only by killing P1, 
 - Charts are drawn with our own `QPainter` widget (`BarChartWidget`); QtCharts is not used.
 - The Deadlock tab is limited to 10 processes and 6 resource types. The page model is simple
   (equal allocation, no TLB, no dirty bits, no page-fault service time).
-- ThreadSanitizer was run on the test programs (which include the engine), not on the Qt GUI.
+- ThreadSanitizer was run on the test programs (which include the engine and the real
+  synchronization demos), not on the Qt GUI.
+- Synchronization: the step simulation wakes waiters in FIFO order; real POSIX mutexes and
+  semaphores do not promise any order. One simulated interleaving can only show a problem, never
+  prove correctness (the Peterson test therefore explores every reachable state). The real race
+  demo may show 0 lost updates on a single-CPU machine. The monitor uses Mesa (signal-and-continue)
+  semantics, like pthreads, not Hoare semantics.
 
 ## 9. Conclusion
 
@@ -339,7 +446,9 @@ The pure `core/` library reproduces the textbook results exactly (17, 5.67, 6.5,
 15/12/9; Belady 9/10; `<P1, P3, P4, P0, P2>`). The thread engine shows real threads, mutexes,
 semaphores, condition variables and pipe IPC working together deterministically, and is clean
 under ThreadSanitizer and AddressSanitizer. The GUI lets a student compare algorithms side by
-side, watch a deadlock form and be recovered from, and export the results.
+side, watch a deadlock form and be recovered from, and export the results. The
+synchronization module makes lost updates, busy waiting, blocking and condition waiting visible line
+by line and backs each mechanism with a real POSIX-thread demonstration.
 
 ## 10. References
 
@@ -350,3 +459,6 @@ side, watch a deadlock form and be recovered from, and export the results.
 4. Linux man pages: `pthread_create(3)`, `pthread_mutex_lock(3p)`, `pthread_cond_wait(3p)`,
    `sem_init(3)`, `sem_wait(3)`, `pipe(2)`, `fork(2)`, `execlp(3)`, `waitpid(2)`.
 5. Qt 6 documentation: Qt Widgets, `QGraphicsScene`, signals and slots across threads (queued connections).
+6. G. L. Peterson, "Myths About the Mutual Exclusion Problem", *Information Processing Letters* 12(3), 1981.
+7. C. A. R. Hoare, "Monitors: An Operating System Structuring Concept", *Communications of the ACM* 17(10), 1974.
+8. Linux man pages: `sem_post(3)`, `pthread_cond_broadcast(3p)`; C++ reference: `std::atomic`, `std::memory_order`.

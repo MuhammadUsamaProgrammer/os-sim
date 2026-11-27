@@ -107,6 +107,38 @@ against the textbook values. The engine only *replays* the result with real thre
 the primitives. Qt widgets may only be used from the GUI thread, so the engine's callback just emits
 a signal. Qt delivers it through a **queued connection** to the GUI thread (`gui/EngineBridge.cpp`).
 
+### 16. Process synchronization tab (race, Peterson, mutex, semaphores, producer-consumer, monitor)
+- **Step model** (`core/sync.cpp`, `SyncSim::step()`): every process runs a program of pseudocode lines,
+  and one step executes exactly one line of one process. You can pick the process yourself (the
+  **Step** button on its card, `SyncTab::stepProcess()`), so you can build any interleaving.
+- **Race condition**: `counter++` is three lines: `reg = counter` (READ), `reg = reg + 1` (MODIFY),
+  `counter = reg` (WRITE). P0 READ, P1 READ, P0 MODIFY, P0 WRITE, P1 MODIFY, P1 WRITE gives counter 1
+  instead of 2: one **lost update**. Two processes between READ and WRITE at once = a critical-section
+  violation (`enterCS()` counts it). We never use an unsynchronized C++ variable for this: the race is
+  in the interleaving. The real demo (`raceBody()` in `engine/sync_demo.cpp`) uses an atomic load and a
+  separate atomic store, so it is well-defined C++ and still loses updates.
+- **Peterson** (exact lecture variant, 2 processes): `other = 1 - process; interested[process] = true;
+  turn = process; while (interested[other] && turn == process);` ... `interested[process] = false;`.
+  Whoever writes `turn` last waits. The busy-wait lane and the orange cards show spinning. The real
+  version (`petersonBody()`) needs `std::atomic` with sequentially consistent order, because a
+  normal compiler/CPU may reorder the stores and loads.
+- **Mutex** (`Op::Lock/Unlock`): owner + waiting queue; the waiter sleeps (blocked, no CPU). The
+  simulation hands the lock to the first waiter (FIFO); a real `pthread_mutex` gives no such promise.
+- **Semaphores** (`Op::SemWait/SemSignal`): `wait` decrements or sleeps, `signal` wakes one sleeper or
+  increments. Binary S = 1 works like a lock; counting S = k lets k processes use k instances.
+  Real: `sem_init`, `sem_wait`, `sem_post`, `sem_destroy` (`semBody()`).
+- **Producer-consumer**: `empty = N`, `full = 0`, `mutex = 1`. The producer blocks on `wait(empty)`
+  when no slot is free; the consumer blocks on `wait(full)` when there is no item. The buffer can never
+  overflow or underflow (checked in every test).
+- **Monitor**: the buffer lives inside the monitor; `insert` / `remove` hold the monitor lock. If the
+  condition is false the process calls `notFull.wait()` / `notEmpty.wait()`, which releases the lock and
+  sleeps. `signal` moves one sleeper to the entry queue (Mesa / pthreads), so it must re-check with
+  `while`. Real: `pthread_mutex` + `pthread_cond_wait/signal` (`monitorInsert()`, `monitorRemove()`).
+- **GUI rule**: the animation is a `QTimer` that calls `stepAuto()` once per tick (no blocking).
+  The real demo runs on a `std::thread` (`SyncBridge`), its lines arrive through queued signals,
+  and **Stop** calls `cancel()`, which posts the semaphores / broadcasts the condition variables so
+  every blocked thread wakes up and can be joined.
+
 ---
 
 ## Part B: 25 likely viva questions
@@ -224,3 +256,60 @@ a signal. Qt delivers it through a **queued connection** to the GUI thread (`gui
     Separation of concerns. `core/` is pure and unit-tested against textbook numbers, the engine
     only demonstrates synchronisation, and the GUI only displays. Worker threads never touch Qt
     widgets (that is not allowed); `EngineBridge` sends events with queued signals.
+
+---
+
+## Part C: Process synchronization questions
+
+26. **What is a race condition? Show one with the simulator.**
+    The result depends on the order in which processes run. Race condition > *Lost update*: both
+    processes read 0 before either writes, so the counter ends at 1 instead of 2.
+
+27. **What is a critical section, and what three properties must a solution have?**
+    The code that touches shared data. A solution needs mutual exclusion (one process inside), progress
+    (if nobody is inside, a process that wants to enter is not blocked forever by processes that are
+    not interested) and bounded waiting (a limit on how often others enter before a waiting process).
+
+28. **Why does Peterson's solution guarantee mutual exclusion?**
+    Both inside would need each to see `turn` set to the other process, but `turn` has one value. The
+    process that wrote `turn` last waits. `test_sync` checks this in all 1211 reachable states.
+
+29. **Why does Peterson need `std::atomic` / sequential consistency on real hardware?**
+    Compilers and CPUs may reorder an ordinary store (`interested[i] = true`) after a later load
+    (`interested[other]`). Then both processes can see the other as not interested and both enter.
+    seq_cst atomics forbid that reordering.
+
+30. **Busy waiting vs blocking?**
+    Peterson spins in its while loop and uses the CPU (busy-wait steps). A mutex or a semaphore puts
+    the waiter to sleep in a queue (blocked steps) and wakes it later: no CPU is wasted, but sleeping
+    and waking cost a context switch. Spinning is fine only for very short waits on multiple CPUs.
+
+31. **Is the FIFO order you show guaranteed by POSIX?**
+    No. The simulation uses FIFO so that it is deterministic. POSIX mutexes and semaphores give mutual
+    exclusion but do not specify which waiter wakes first, so bounded waiting is not guaranteed.
+
+32. **Binary semaphore vs counting semaphore?**
+    A binary semaphore has values 0 and 1 (mutual exclusion or signalling). A counting semaphore starts
+    at the number of identical resources; with S = 2, at most 2 processes use a printer at once.
+
+33. **In producer-consumer, why `wait(empty)` before `wait(mutex)`?**
+    If a producer took the mutex first and then slept on `empty` (buffer full), no consumer could get
+    the mutex to remove an item: a deadlock.
+
+34. **Why `while` and not `if` around `cond.wait()`?**
+    With Mesa / pthread semantics the signaller keeps the lock, and the woken process re-enters later.
+    By then another process may have changed the state (and spurious wake-ups are allowed), so the
+    condition must be checked again.
+
+35. **What does a monitor add compared with semaphores?**
+    Encapsulation: the shared data can only be reached through the monitor's procedures, which always
+    run with the lock held, so a forgotten `signal(mutex)` cannot happen. Condition variables handle
+    waiting for a state.
+
+36. **One run of the unsynchronized program gave the right answer. Is it correct?**
+    No. A test run can only show the presence of a bug. The Comparison page lists the theoretical
+    guarantee separately from what one run observed.
+
+37. **How do you stop a real demo whose threads are blocked?**
+    `SyncDemoRunner::cancel()` sets a flag and posts the semaphores / broadcasts the condition
+    variables. A woken thread sees the flag, passes the wake-up on and exits, and `run()` joins them all.

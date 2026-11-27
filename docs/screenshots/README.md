@@ -13,6 +13,10 @@ Start the app with `cd build && ./gui/ossim` and maximise the window.
 | 6 | `06_bankers_safe.png` | Deadlock tab, **Load Banker's sample**, **Check safety**: `SAFE: <P1, P3, P4, P0, P2>` with the trace. Optionally also request P1 `1 0 2`. |
 | 7 | `07_deadlock_rag.png` | Deadlock tab, **Load deadlock sample**, **Detect deadlock**: P1-P4 red in the tables and in the resource-allocation graph. Then a second shot `07b_recovered.png` after **Recover**. |
 | 8 | `08_integrated.png` | File > Load sample > requests_integrated.csv; Integrated run page; untick *Deadlock avoidance*; **Run integrated**: results (P1 killed), then the Deadlock tab showing the P1 -> B -> P2 -> A -> P1 cycle. |
+| 9 | `09_sync_race.png` | Synchronization tab, *Race condition*, scenario *Lost update*, press **Step** six times: counter = 1, expected 2, 1 lost update, red violation. |
+| 10 | `10_sync_peterson.png` | *Peterson's solution*, *Both want to enter at the same time*, **Step** 9 times: P0 in the critical section, P1 busy-waiting, flags and turn visible. |
+| 11 | `11_sync_producer_consumer.png` | *Producer-consumer*, *Fast producer*, **Run** and **Pause** when the producer sits in the queue of `empty` with the buffer full. |
+| 12 | `12_sync_comparison.png` | **Comparison** page, **Compare**: table + chart (unsynchronized loses updates, the others do not). |
 
 Shortcut: the self-test can save window images automatically (without window frames):
 `cd build && OSSIM_SHOTS=../docs/screenshots QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest`

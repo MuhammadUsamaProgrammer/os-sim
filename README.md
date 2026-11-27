@@ -1,6 +1,6 @@
 # OS-Sim: An Integrated Operating System Simulator
 
-**CPU Scheduling, Memory Management and Deadlock Detection with a GUI**
+**CPU Scheduling, Memory Management, Deadlock Detection and Process Synchronization with a GUI**
 
 Operating System Lab, BS (IT) semester 5, Bahria University. Instructor: Amarah Abdullah.
 
@@ -16,6 +16,9 @@ OS-Sim is one Qt desktop application in which you create processes, run them thr
 different CPU schedulers, watch paging and page replacement, and avoid, detect and recover
 from deadlocks. The animated mode replays a schedule with real POSIX threads, mutexes,
 semaphores, condition variables and a pipe, so the OS primitives are visible in the code.
+The **Synchronization** tab shows race conditions, Peterson's solution, mutex locks, binary and
+counting semaphores, the producer-consumer problem and monitors, one instruction at a time,
+and runs each primitive with real POSIX threads.
 
 ## Features
 
@@ -34,6 +37,17 @@ semaphores, condition variables and a pipe, so the OS primitives are visible in 
   resource-allocation graph (deadlocked processes and cycle edges in red).
 - **Integrated run:** scheduling, paging and resource requests together, tick by tick, with Banker's
   avoidance on or off, periodic detection and automatic recovery.
+- **Process synchronization:** race condition (lost updates through read/modify/write
+  interleaving), Peterson's solution (lecture variant, 2 processes), mutex locks, binary and counting
+  semaphores, producer-consumer (bounded buffer with `empty`/`full`/`mutex`) and a monitor with
+  condition variables. Each one is a deterministic instruction-level simulation: process cards with
+  states and a per-process **Step** button (you choose the interleaving), an animated scene
+  (entry section, busy-wait lane, critical section, waiting queues, bounded buffer), live shared
+  variables, line-by-line pseudocode highlighting, an execution timeline, an event log, expected vs
+  actual results and statistics, Run/Pause/Resume/Step/Stop/Reset and a speed slider, plus sample
+  scenarios. A **Comparison** page runs the same two-process workload unsynchronized, with Peterson,
+  a mutex and a binary semaphore. A **Real POSIX demo** page runs each primitive with real threads
+  (`pthread_mutex`, `sem_t`, `pthread_cond`, `std::atomic` seq_cst for Peterson).
 - **Export:** `File > Export report...` writes `<name>.txt` and `<name>.csv` with every section.
 - Bad input never crashes the program. It shows a warning dialog instead.
 
@@ -52,7 +66,7 @@ demo and the tests still build.
 ```bash
 mkdir -p build && cd build
 cmake .. && make -j2          # use make -j1 if the VM runs out of memory
-ctest --output-on-failure     # 5 test programs, all must pass
+ctest --output-on-failure     # 7 test programs, all must pass
 ./gui/ossim                   # the GUI
 QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest   # automatic GUI smoke test, exit code 0
 ```
@@ -65,6 +79,7 @@ Console demo (run from the project root so `samples/` is found):
 ./build/apps/ossim_console memory "7,0,1,2,0,3,0,4" 3
 ./build/apps/ossim_console deadlock
 ./build/apps/ossim_console engine samples/processes_fcfs.csv rr 4 --real   # live thread log + fork/exec demo
+./build/apps/ossim_console sync --real          # synchronization scenarios, comparison, real pthread demos
 ```
 
 Sanitizer builds (manual checks):
@@ -85,12 +100,14 @@ os-sim/
 │   ├── memory.*         FramePool (FIFO/LRU/Optimal), page tables, frame allocator
 │   ├── deadlock.*       Banker's, detection, recovery, RAG
 │   ├── integrated.*     integrated run (scheduling + paging + resources)
+│   ├── sync.*           synchronization simulator (race, Peterson, mutex, semaphores, buffer, monitor)
 │   └── io_formats.*     sample file loaders/savers
 ├── engine/            pthreads + semaphores + mutex + condvar + pipe (library osengine)
 │   ├── engine.*         SimulationEngine, realProcessDemo (fork/exec/wait)
-│   └── logger.*         PipeLogger (pipe IPC)
+│   ├── logger.*         PipeLogger (pipe IPC)
+│   └── sync_demo.*      real pthread demos of every synchronization primitive (cancellable)
 ├── apps/console_main.cpp   console demo (ossim_console)
-├── gui/               Qt 6 Widgets application (ossim)
+├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab
 ├── tests/             one test program per module, registered with ctest
 ├── samples/           process CSVs, reference strings, Banker/deadlock matrices, scripted requests
 └── docs/              REPORT.md, VIVA_NOTES.md, screenshots/
@@ -132,6 +149,21 @@ os-sim/
 4. **Detect deadlock** paints the deadlocked processes red in the tables and in the graph.
    **Recover** terminates victims one by one and redraws.
 5. **Use Scheduling tab pids** labels the rows with the Scheduling tab's processes.
+
+### Synchronization tab
+1. Choose an **algorithm** and a **sample scenario** (e.g. *Race condition > Lost update*). The
+   scenario fills the parameters; changing a parameter switches to *Custom settings*.
+2. **Run** animates one instruction per tick (speed slider 50-1000 ms). **Pause** / **Resume**,
+   **Step** (one instruction chosen by the scheduler), **Stop**, **Reset**, **Run to end**.
+3. To choose the interleaving yourself, press the **Step** button on a process card: that process
+   executes exactly one line (e.g. P0 read, P1 read, P0 inc, P0 write, P1 inc, P1 write loses an update).
+4. Watch the scene (who is in the critical section, who busy-waits, who sleeps in which queue), the
+   pseudocode (chip = next line of each process, colour = line just executed), the live variables,
+   the timeline and the statistics (expected vs actual, lost updates, violations, waiting steps).
+5. **Comparison** page: the same 2-process counter workload unsynchronized / Peterson / mutex /
+   binary semaphore, table + chart, theoretical guarantee vs what this run observed.
+6. **Real POSIX demo** page: runs the primitive with real threads on a background thread (the GUI
+   stays responsive; **Stop** cancels it safely) and checks the result.
 
 ### Export
 `File > Export report...` asks for a base name and writes `<name>.txt` (readable report) and

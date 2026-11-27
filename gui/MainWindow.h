@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton;
-class SchedulingTab; class MemoryTab; class DeadlockTab;
+class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -32,6 +32,7 @@ private:
     SchedulingTab* sched_;
     MemoryTab* mem_;
     DeadlockTab* dead_;
+    SyncTab* sync_;
     QPlainTextEdit* log_;
     QAction* darkAction_ = nullptr;     // View > Dark theme (checkable)
     QToolButton* themeButton_ = nullptr; // switch button in the menu-bar corner
