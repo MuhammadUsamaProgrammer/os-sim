@@ -41,6 +41,7 @@
 #include "StorageTab.h"
 #include "HeapLab.h"
 #include "SysMonTab.h"
+#include "JobControlTab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -76,6 +77,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     procArea_->addTab(proc_, "Process Lifecycle");
     sysmon_ = new SystemMonitorPage;
     procArea_->addTab(sysmon_, "System Monitor");
+    jobs_ = new JobControlPage;
+    procArea_->addTab(jobs_, "Job Control");
     tabs_->insertTab(1, new PageScroll(procArea_), "Processes");
     tabs_->addTab(new PageScroll(threads_), "Threads");
     tabs_->addTab(new PageScroll(ipc_), "IPC");
@@ -111,6 +114,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(threads_, &ThreadsTab::logMessage, this, &MainWindow::appendLog);
     connect(storage_, &StorageArea::logMessage, this, &MainWindow::appendLog);
     connect(sysmon_, &SystemMonitorPage::logMessage, this, &MainWindow::appendLog);
+    connect(jobs_, &JobControlPage::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -480,6 +484,7 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     T << "\n=== Threading models ===\n" << threads_->reportText();
     C << "\n" << threads_->csvSection();
     // 14. Storage and files
+    T << "\n=== Job control (simulated shell) ===\n" << jobs_->reportText();
     T << "\n=== Storage and files (virtual disk) ===\n" << storage_->reportText();
     C << "\n" << storage_->csvSection();
     // 15. Event log
@@ -1038,6 +1043,35 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3: Processes > Job Control (deterministic shell model + Live Linux process groups)
+    {
+        JobControlPage* jc = jobs_;
+        showTab(jc);
+        bool all = true;
+        for (int i = 0; i < (int)jobScenarios().size(); ++i) all = jc->loadScenario(i) && all;
+        stCheck(all, "job control: all scenarios replay");
+        jc->loadScenario(0);
+        jc->playback()->setPosition(jc->playback()->length());
+        stCheck(jc->shell().job(1) && jc->shell().job(1)->state == JcJobState::Done && jc->shell().shellHasTerminal(),
+                "job control: background job stopped, resumed, foregrounded and completed");
+        jc->loadScenario(-1);
+        stCheck(jc->command("compute 5 &") && jc->shell().job(1)->pgid == 101 && jc->shell().shellHasTerminal(), "job control: background job via the console (job [1], PGID 101)");
+        stCheck(jc->command("kill -STOP %1") && jc->shell().job(1)->state == JcJobState::Stopped, "job control: kill -STOP stops the group");
+        stCheck(!jc->command("kill -STOP 4242"), "job control: bare PID refused (no signals to unrelated processes)");
+        stCheck(!jc->command("ls /home"), "job control: arbitrary commands are never executed");
+        stCheck(jc->command("fg %1") && jc->shell().fgPgid() == 101, "job control: fg gives the job the terminal");
+        stCheck(jc->command("ctrl-z") && jc->shell().shellHasTerminal(), "job control: Ctrl-Z returns the terminal to the shell");
+        jc->playback()->setPosition(2);
+        stCheck(jc->command("tick 2") && jc->shell().job(1)->state == JcJobState::Stopped, "job control: command after Previous starts a new branch");
+        jc->loadScenario(4);
+        jc->playback()->setPosition(6);
+        shot(this, "job_control_pipeline");
+        if (NativeRunner::available()) {
+            bool ok = jc->startNativeDemo() && waitFor([&] { return !jc->nativeRunning(); }, 10000);
+            stCheck(ok && jc->nativeExitCode() == 0 && jc->nativeEventCount() >= 10, "job control live demo: process groups, SIGSTOP/SIGCONT, pipeline, cleanup");
+        }
+    }
+
     // ---- Phase 3: Processes > System Monitor (live, sampled on a worker thread)
     {
         SystemMonitorPage* sm = sysmon_;
@@ -1224,6 +1258,7 @@ int MainWindow::runSelfTest() {
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
                                 {io_, -1, "I/O"}, {disk_, -1, "Disk"},
                                 {memArea_->heapLab(), -1, "Memory > Heap Laboratory"}, {sysmon_, -1, "Processes > System Monitor"},
+                                {jobs_, -1, "Processes > Job Control"},
                                 {storage_->explorer(), -1, "Storage > File Explorer"}, {storage_->access(), -1, "Storage > Access Control"},
                                 {storage_->blocks(), -1, "Storage > Block Allocation"}, {storage_->recovery(), -1, "Storage > Recovery Lab"}};
         for (const T& t : pages) {

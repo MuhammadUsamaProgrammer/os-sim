@@ -294,6 +294,18 @@ Done together because the Recovery Lab works on the same model (dependency, not 
 - Tests: `test_sysmon` (59 checks: fixtures + Linux smoke test); self-test: 13 checks incl. suspend/resume/stop of the
   owned worker. Export contains no live process details.
 
+### Stage 5: Processes > Job Control (done)
+- `core/jobctl.*` (pure): one terminal session, jobs (job id separate from PID / PGID), one process group per job,
+  exactly one foreground group, limited grammar (compute / sleep / readline / gen N | upper, &, jobs, fg, bg,
+  kill -TERM|-KILL|-INT|-STOP|-CONT %n, wait, ctrl-z, ctrl-c, type, tick, until-prompt), SIGTSTP / SIGSTOP / SIGCONT /
+  SIGINT / SIGTERM / SIGKILL / SIGTTIN semantics, job completion, refusal of bare PIDs and arbitrary commands. The
+  pipeline REUSES the IPC pipe model (IpcSim in pipe mode: capacity, blocking, closed unused ends, EOF).
+- GUI: Processes > Job Control: console + buttons, animated process-group view (foreground arrow moves, pipe buffer),
+  job list, process tree, transcript, event timeline, playback with new branch after Previous. fg/bg are labelled
+  SIMULATED; Live Linux tab runs `ossim_helper jobs` (setpgid, kill(-pgid, SIGSTOP/SIGCONT/SIGTERM) on its own
+  children, waitpid WUNTRACED/WCONTINUED, 2-stage pipe pipeline, everything reaped; no tcsetpgrp / PTY).
+- Tests: `test_jobctl` (98 checks), `test_native` (jobs demo); self-test: 10 job-control checks.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
