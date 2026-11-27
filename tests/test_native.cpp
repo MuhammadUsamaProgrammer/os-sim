@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 #include "check.h"
 
@@ -112,5 +113,22 @@ int main() {
     }
     CHECK(runHelper("threads 0 10", v) == 2);                // invalid arguments rejected
     CHECK(runHelper("bogus", v) == 2);
+    // Phase 3: real file syscalls inside a private temporary directory (removed afterwards)
+    CHECK(runHelper("fsdemo", v) == 0 && noErrors(v));
+    CHECK(has(v, "fstat", "link count 1") && has(v, "unlink", "link count 0") && has(v, "read", "after unlink = 5 bytes: \"hello\""));
+    if (const Ev* m = find(v, "mkdtemp")) {
+        std::string dir = m->detail.substr(m->detail.rfind(' ') + 1);
+        CHECK(access(dir.c_str(), F_OK) != 0);                       // the temporary directory is gone
+    } else CHECK(false);
+    // Phase 3: job control on own children - process groups, SIGSTOP / SIGCONT, pipeline, SIGTERM
+    CHECK(runHelper("jobs", v) == 0 && noErrors(v));
+    CHECK(has(v, "job-stopped", "stopped by signal") && has(v, "job-continued", "continued"));
+    CHECK(has(v, "read", "ITEM 4") && has(v, "job-terminated", "killed by signal 15") && find(v, "done"));
+    const Ev* prod = find(v, "write", "producer");
+    const Ev* cons = find(v, "read", "consumer");
+    CHECK(prod && cons && prod->ppid == cons->ppid);
+    // Phase 3: bounded monitor worker (System Monitor demo process)
+    CHECK(runHelper("worker 1 4 10", v) == 0 && find(v, "started") && find(v, "finished"));
+    CHECK(runHelper("worker 999 4 10", v) == 2);                    // limits enforced
     return report("test_native");
 }

@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton; class QDockWidget; class PanelSplitter;
-class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab;
+class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab; class StorageArea;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -50,6 +50,7 @@ private:
     MemAdvArea* memArea_;
     IpcTab* ipc_;
     ThreadsTab* threads_;
+    StorageArea* storage_;
     void showMemoryTab();
     void showTab(QWidget* page);
     QWidget* pageOf(int i) const;

@@ -38,6 +38,7 @@
 #include "MemAdvTab.h"
 #include "IpcTab.h"
 #include "ThreadsTab.h"
+#include "StorageTab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -74,6 +75,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     tabs_->addTab(new PageScroll(ipc_), "IPC");
     tabs_->addTab(new PageScroll(io_), "I/O");
     tabs_->addTab(new PageScroll(disk_), "Disk");
+    storage_ = new StorageArea;                   // Phase 3: the only new parent tab
+    tabs_->addTab(new PageScroll(storage_), "Storage && Files");
     setCentralWidget(tabs_);
 
     log_ = new QPlainTextEdit;
@@ -100,6 +103,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(memArea_, &MemAdvArea::logMessage, this, &MainWindow::appendLog);
     connect(ipc_, &IpcTab::logMessage, this, &MainWindow::appendLog);
     connect(threads_, &ThreadsTab::logMessage, this, &MainWindow::appendLog);
+    connect(storage_, &StorageArea::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -188,10 +192,15 @@ void MainWindow::syncViewActions() {
     focusAction_->setChecked(focusView());
 }
 
-// Shows the top-level tab whose page is `page` (pages sit inside a PageScroll container).
+// Shows the page: selects its top-level tab and, for a page inside a sub-tab area (Memory,
+// Scheduling, Processes, Storage & Files), every enclosing sub-tab.
 void MainWindow::showTab(QWidget* page) {
-    for (int i = 0; i < tabs_->count(); ++i)
-        if (pageOf(i) == page) { tabs_->setCurrentIndex(i); return; }
+    for (QWidget* w = page; w; w = w->parentWidget()) {
+        QWidget* stack = w->parentWidget();
+        if (auto* tw = stack ? qobject_cast<QTabWidget*>(stack->parentWidget()) : nullptr)
+            if (tw->indexOf(w) >= 0) tw->setCurrentWidget(w);
+        if (w == tabs_) break;
+    }
 }
 
 // The module widget of tab i (unwrapping the PageScroll container).
@@ -463,7 +472,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 13. Threading models
     T << "\n=== Threading models ===\n" << threads_->reportText();
     C << "\n" << threads_->csvSection();
-    // 14. Event log
+    // 14. Storage and files
+    T << "\n=== Storage and files (virtual disk) ===\n" << storage_->reportText();
+    C << "\n" << storage_->csvSection();
+    // 15. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -564,10 +576,10 @@ QStringList MainWindow::layoutReport(const QList<QSize>& sizes, bool print) {
         };
         for (int i = 0; i < tabs_->count(); ++i) {
             tabs_->setCurrentIndex(i);
-            if (pageOf(i) == memArea_) {
-                for (int k = 0; k < memArea_->count(); ++k) {
-                    memArea_->setCurrentIndex(k);
-                    check(memArea_->widget(k), "Memory > " + memArea_->tabText(k).replace("&&", "&"));
+            if (auto* area = qobject_cast<QTabWidget*>(pageOf(i))) {      // sub-tab area: audit every child view
+                for (int k = 0; k < area->count(); ++k) {
+                    area->setCurrentIndex(k);
+                    check(area->widget(k), tabs_->tabText(i).replace("&&", "&") + " > " + area->tabText(k).replace("&&", "&"));
                 }
             } else {
                 check(tabs_->widget(i), tabs_->tabText(i));   // audit through the page scroll container
@@ -1019,6 +1031,79 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3: Storage & Files (one shared virtual filesystem behind four child views)
+    {
+        StorageArea* st = storage_;
+        ExplorerPage* ex = st->explorer();
+        showTab(ex);
+        stCheck(st->newDisk(64, 64, AllocStrategy::Indexed, true), "storage: new indexed sample disk");
+        ex->setCwd("/home/alice");
+        stCheck(ex->cwd() == "/home/alice" && st->fs().currentUser() == 1000, "storage explorer: enter /home/alice as alice");
+        stCheck(ex->apply("create", "/home/alice/selftest.txt", "hello").ok(), "storage explorer: create file");
+        stCheck(ex->apply("append", "/home/alice/selftest.txt", " world").ok() && st->fs().readFile("/home/alice/selftest.txt").data == "hello world",
+                "storage explorer: append and read back");
+        stCheck(ex->apply("link", "/home/alice/selftest.txt", "/tmp/selftest-link").ok() &&
+                st->fs().inode(st->fs().resolve("/tmp/selftest-link").value)->links == 2, "storage explorer: hard link shares the inode (link count 2)");
+        stCheck(ex->apply("mkdir", "/home/alice/sub").ok() && ex->apply("rename", "/home/alice/sub", "/home/alice/sub2").ok(), "storage explorer: mkdir + rename");
+        stCheck(ex->apply("read", "/tmp/loopA").err == FsErr::Loop, "storage explorer: symbolic link loop detected (ELOOP)");
+        int pid = st->fs().shellPid(1000);
+        FsResult o = ex->fdOp("open-rw", pid, "/home/alice/selftest.txt");
+        FsResult rd = ex->fdOp("read", pid, "5", o.value);
+        stCheck(o.ok() && rd.ok() && rd.data == "hello", "storage descriptors: open + read(5) = 'hello' (offset 5)");
+        int ino = st->fs().resolve("/tmp/selftest-link").value;
+        size_t delBefore = st->fs().deleted().size();
+        ex->apply("delete", "/home/alice/selftest.txt");
+        ex->apply("delete", "/tmp/selftest-link");
+        stCheck(st->fs().inode(ino) && st->fs().deleted().size() == delBefore, "storage: unlinking both names of an open file keeps the inode");
+        stCheck(ex->fdOp("close", pid, QString(), o.value).ok() && !st->fs().inode(ino) && st->fs().deleted().size() == delBefore + 1,
+                "storage: the last close releases the inode (deleted record created)");
+        shot(this, "storage_explorer");
+        AccessPage* ac = st->access();
+        showTab(ac);
+        ac->setPath("/shared/plan.txt");
+        stCheck(ac->matrixAllowed(1, 0) && !ac->matrixAllowed(2, 0) && ac->matrixAllowed(3, 1), "storage access: group file - alice reads, bob denied, carol writes");
+        ac->setPath("/home/alice/todo.txt");
+        stCheck(ac->applyPreset(2), "storage access: chmod 644 preset as the owner");
+        stCheck(!ac->matrixAllowed(2, 0), "storage access: public-readable file still denied to bob (no search permission on /home/alice)");
+        int w0 = ui::warningCount();
+        stCheck(!ac->applyMode("98x") && ui::warningCount() == w0 + 1, "storage access: invalid mode -> warning");
+        st->fs().setCurrentUser(1001);
+        stCheck(!ac->applyMode("777"), "storage access: chmod by a non-owner is refused (EPERM)");
+        st->fs().setCurrentUser(1000);
+        shot(this, "storage_access");
+        BlockPage* bp = st->blocks();
+        showTab(bp);
+        stCheck(bp->compare(0) && bp->comparison().size() == 3 && bp->comparison()[0].failures == 1 &&
+                bp->comparison()[1].failures == 0 && bp->comparison()[2].failures == 0,
+                "storage blocks: contiguous fails despite enough free blocks, linked and indexed succeed");
+        st->fs().setCurrentUser(0);
+        stCheck(bp->allocate("blocktest.bin", 300).ok() && bp->selectedFile() == st->fs().resolve("/blocktest.bin").value,
+                "storage blocks: allocate on the shared disk, the file is selectable in the inspector");
+        int fromExplorer = ex->apply("create", "/shared-state.txt", "x").value;
+        bp->selectFile(fromExplorer);
+        stCheck(bp->selectedFile() == fromExplorer, "storage: a file created in the Explorer appears in Block Allocation (one shared model)");
+        stCheck(st->fs().checkInvariants().empty(), "storage: filesystem invariants hold after the GUI operations");
+        shot(this, "storage_blocks");
+        RecoveryPage* rp = st->recovery();
+        showTab(rp);
+        stCheck(rp->loadPreset(0) && rp->current().cls == RecoveryClass::Full && rp->current().verified, "storage recovery: intact deleted file fully recoverable (verified)");
+        stCheck(rp->restore("/recovered/notes.txt").ok() && st->fs().resolveAs(0, "/recovered/notes.txt").ok(), "storage recovery: restore into a new file");
+        stCheck(!rp->restore("/recovered/notes.txt").ok(), "storage recovery: restore never overwrites");
+        stCheck(rp->loadPreset(1) && rp->current().cls == RecoveryClass::Partial, "storage recovery: partially overwritten");
+        stCheck(rp->loadPreset(2) && rp->current().cls == RecoveryClass::Unrecoverable, "storage recovery: fully overwritten");
+        rp->loadPreset(3);
+        rp->selectCandidate(1);
+        stCheck(rp->candidateCount() == 2 && rp->current().cls == RecoveryClass::Unknown, "storage recovery: carved signature without metadata = unknown integrity");
+        rp->loadPreset(1);
+        shot(this, "storage_recovery");
+        if (NativeRunner::available()) {
+            showTab(ex);
+            bool ok = ex->startNativeDemo() && waitFor([&] { return !ex->nativeRunning(); }, 10000);
+            stCheck(ok && ex->nativeExitCode() == 0 && ex->nativeEventCount() >= 10, "storage live demo: real file syscalls in a private temp dir");
+        }
+        rp->loadPreset(0);
+    }
+
     // ---- Responsive layout regression (real geometry; see LayoutAudit.h and PanelLayout.h)
     {
         QStringList lp = layoutReport({QSize(1920, 1080), QSize(1366, 768), QSize(1024, 768), QSize(910, 480)}, false);
@@ -1048,7 +1133,9 @@ int MainWindow::runSelfTest() {
         std::vector<T> pages = {{sched_, -1, "Scheduling"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
                                 {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
-                                {io_, -1, "I/O"}, {disk_, -1, "Disk"}};
+                                {io_, -1, "I/O"}, {disk_, -1, "Disk"},
+                                {storage_->explorer(), -1, "Storage > File Explorer"}, {storage_->access(), -1, "Storage > Access Control"},
+                                {storage_->blocks(), -1, "Storage > Block Allocation"}, {storage_->recovery(), -1, "Storage > Recovery Lab"}};
         for (const T& t : pages) {
             showTab(t.page);
             if (t.sub >= 0) memArea_->setCurrentIndex(t.sub);
@@ -1206,10 +1293,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== IPC", "=== Threading models", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== IPC", "=== Threading models", "=== Storage and files", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging", "## IPC", "## Threading models",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging", "## IPC", "## Threading models", "## Storage and files",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");

@@ -7,11 +7,13 @@
 //     T=<ms> ROLE=<parent|child|...> PID=<pid> PPID=<ppid> EVENT=<name> | <detail>
 //
 // Demos: fork exec wait sleep zombie orphan signal | shm msg pipe fifo | threads <n> <base>
+//        Phase 3: fsdemo (file syscalls) | worker <s> <MiB> <busy%> (System Monitor) | jobs (process groups)
 // Rules: no root, no arbitrary commands, no signals to foreign processes, bounded waits,
 // every child is reaped and every IPC object / temporary file is removed on all paths.
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <dirent.h>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -482,6 +484,170 @@ static int demoThreads(int n, long base) {
     return allOk ? 0 : 1;
 }
 
+
+// ------------------------------------------------------------------ Phase 3: file syscalls
+
+// Real open/write/lseek/read/fstat/link/readdir/unlink/close/rmdir, only inside a private
+// mkdtemp() directory that is removed on every path.
+static int demoFs() {
+    char dir[] = "/tmp/ossim_fs_XXXXXX";
+    if (!mkdtemp(dir)) { emit("main", "error", err("mkdtemp")); return 1; }
+    std::string a = std::string(dir) + "/notes.txt", b = std::string(dir) + "/second-name.txt";
+    auto cleanup = [&]() { unlink(a.c_str()); unlink(b.c_str()); rmdir(dir); };
+    emit("main", "mkdtemp", std::string("private temporary directory ") + dir);
+    int fd = open(a.c_str(), O_CREAT | O_EXCL | O_RDWR, 0640);
+    if (fd < 0) { emit("main", "error", err("open")); cleanup(); return 1; }
+    emit("main", "open", "open(\"notes.txt\", O_CREAT|O_EXCL|O_RDWR, 0640) = fd " + str(fd));
+    const char* text = "hello from a real file\n";
+    ssize_t w = write(fd, text, strlen(text));
+    emit("main", "write", "write(fd, 23 bytes) = " + str(w) + "; offset is now " + str((long)lseek(fd, 0, SEEK_CUR)));
+    lseek(fd, 0, SEEK_SET);
+    char buf[16] = {0};
+    ssize_t r = read(fd, buf, 5);
+    emit("main", "read", "lseek(fd, 0) then read(fd, 5) = " + str(r) + " bytes: \"" + std::string(buf, r > 0 ? r : 0) + "\"");
+    struct stat st{};
+    fstat(fd, &st);
+    char mode[16];
+    snprintf(mode, sizeof mode, "%03o", (unsigned)(st.st_mode & 0777));
+    emit("main", "fstat", "inode " + str((long)st.st_ino) + ", size " + str((long)st.st_size) + ", mode " + mode + ", link count " + str((long)st.st_nlink));
+    if (link(a.c_str(), b.c_str()) == 0) {
+        fstat(fd, &st);
+        emit("main", "link", "link(notes.txt, second-name.txt): same inode " + str((long)st.st_ino) + ", link count " + str((long)st.st_nlink));
+    } else emit("main", "link-failed", err("link") + " (the temporary filesystem may not support hard links)");
+    if (DIR* d = opendir(dir)) {
+        std::string names;
+        while (dirent* e = readdir(d)) if (std::strcmp(e->d_name, ".") && std::strcmp(e->d_name, "..")) names += std::string(names.empty() ? "" : ", ") + e->d_name;
+        closedir(d);
+        emit("main", "readdir", "directory entries: " + names);
+    }
+    unlink(a.c_str());
+    unlink(b.c_str());
+    fstat(fd, &st);
+    emit("main", "unlink", "both names unlinked while fd " + str(fd) + " is open: link count " + str((long)st.st_nlink) + ", data still reachable");
+    lseek(fd, 0, SEEK_SET);
+    r = read(fd, buf, 5);
+    emit("main", "read", "read(fd, 5) after unlink = " + str(r) + " bytes: \"" + std::string(buf, r > 0 ? r : 0) + "\"");
+    close(fd);
+    emit("main", "close", "close(fd): the last reference is gone, the kernel may now free the inode and its blocks");
+    cleanup();
+    emit("main", "removed", "temporary directory removed");
+    return 0;
+}
+
+// ------------------------------------------------------------------ Phase 3: owned monitor worker
+
+static volatile sig_atomic_t g_cont = 0;
+static void onCont(int) { g_cont = 1; }
+
+// A harmless bounded worker for the System Monitor: uses `busy` percent of one core and touches
+// `mb` MiB, for at most `seconds`. SIGTERM = cooperative stop; SIGSTOP / SIGCONT come from the GUI.
+static int demoWorker(int seconds, int mb, int busy) {
+    if (seconds < 1 || seconds > 120 || mb < 0 || mb > 256 || busy < 0 || busy > 100) { emit("worker", "error", "seconds 1..120, MiB 0..256, busy 0..100"); return 2; }
+    struct sigaction sc{};
+    sc.sa_handler = onCont;
+    sigaction(SIGCONT, &sc, nullptr);
+    std::vector<char> mem((size_t)mb * 1024 * 1024);
+    for (size_t i = 0; i < mem.size(); i += 4096) mem[i] = (char)i;        // touch every page -> resident
+    emit("worker", "started", "busy " + str(busy) + "% of one core, " + str(mb) + " MiB touched, at most " + str(seconds) + " s");
+    long start = nowMs(), lastTick = start;
+    volatile unsigned long spin = 0;
+    while (!g_stop && nowMs() - start < seconds * 1000L) {
+        long slice = nowMs();
+        while (nowMs() - slice < busy) ++spin;                             // busy part of 100 ms
+        if (busy < 100) usleep((useconds_t)(100 - busy) * 1000);
+        if (g_cont) { g_cont = 0; emit("worker", "continued", "received SIGCONT: running again"); }
+        if (nowMs() - lastTick >= 1000) { lastTick = nowMs(); emit("worker", "tick", "alive for " + str((nowMs() - start) / 1000) + " s"); }
+    }
+    emit("worker", g_stop ? "stopped" : "finished", g_stop ? "SIGTERM received: cooperative stop, memory released" : "time limit reached");
+    return 0;
+}
+
+// ------------------------------------------------------------------ Phase 3: process groups / job control
+
+static int reapUntraced(pid_t pid, int flags, int timeoutMs) {
+    int st = 0;
+    long start = nowMs();
+    for (;;) {
+        pid_t r = waitpid(pid, &st, WNOHANG | flags);
+        if (r == pid) return st;
+        if (r < 0 && errno != EINTR) return -1;
+        if (g_stop || nowMs() - start > timeoutMs) return -2;
+        usleep(5000);
+    }
+}
+
+// Background job in its own process group stopped / continued / terminated with group signals,
+// and a two-stage pipeline job (one process group, connected by pipe()). Only own children.
+static int demoJobs() {
+    emit("shell", "session", "helper PID " + str(getpid()) + ", process group " + str((long)getpgrp()) + ", session " + str((long)getsid(0)) +
+                             " (no controlling terminal is used: tcsetpgrp() is not called)");
+    pid_t w = fork();
+    if (w < 0) { emit("shell", "error", err("fork")); return 1; }
+    if (w == 0) {
+        setpgid(0, 0);
+        signal(SIGTERM, SIG_DFL);
+        for (int i = 0; i < 50; ++i) { usleep(100000); if (i % 3 == 0) emit("job1", "working", "background job running (tick " + str(i) + ")"); }
+        _exit(0);
+    }
+    setpgid(w, w);
+    emit("shell", "job-started", "[1] " + str(w) + ": background job in NEW process group " + str(w));
+    msleep(400);
+    kill(-w, SIGSTOP);                                          // the whole group (our child only)
+    int st = reapUntraced(w, WUNTRACED, 3000);
+    emit("shell", "job-stopped", "kill(-" + str(w) + ", SIGSTOP) -> waitpid(WUNTRACED): " +
+                                 (st >= 0 && WIFSTOPPED(st) ? "stopped by signal " + str(WSTOPSIG(st)) : std::string("no stop report")));
+    msleep(300);
+    kill(-w, SIGCONT);
+    st = reapUntraced(w, WCONTINUED, 3000);
+    emit("shell", "job-continued", "kill(-" + str(w) + ", SIGCONT) -> waitpid(WCONTINUED): " + (st >= 0 && WIFCONTINUED(st) ? "continued" : "no continue report"));
+    // pipeline job: producer | consumer in one process group
+    int p[2];
+    if (pipe(p) != 0) { emit("shell", "error", err("pipe")); kill(-w, SIGKILL); reap(w, "shell"); return 1; }
+    pid_t a = fork();
+    if (a == 0) {
+        setpgid(0, 0);
+        close(p[0]);
+        for (int i = 1; i <= 4; ++i) {
+            std::string line = "item " + str(i) + "\n";
+            (void)!write(p[1], line.c_str(), line.size());
+            emit("producer", "write", "wrote '" + line.substr(0, line.size() - 1) + "' into the pipe");
+            usleep(80000);
+        }
+        close(p[1]);
+        _exit(0);
+    }
+    pid_t b = a > 0 ? fork() : -1;
+    if (b == 0) {
+        setpgid(0, a);
+        close(p[1]);
+        char buf[64];
+        std::string acc;
+        ssize_t n;
+        while ((n = read(p[0], buf, sizeof buf)) > 0) {
+            acc.append(buf, n);
+            size_t nl;
+            while ((nl = acc.find('\n')) != std::string::npos) {
+                std::string l = acc.substr(0, nl);
+                acc.erase(0, nl + 1);
+                for (char& c : l) c = (char)toupper((unsigned char)c);
+                emit("consumer", "read", "read and transformed -> '" + l + "'");
+            }
+        }
+        _exit(0);
+    }
+    close(p[0]);
+    close(p[1]);
+    if (a > 0) setpgid(a, a);
+    if (b > 0) setpgid(b, a);
+    emit("shell", "pipeline", "[2] producer " + str(a) + " | consumer " + str(b) + " share process group " + str(a));
+    if (a > 0) emit("shell", "reaped", "producer " + statusText(reap(a, "shell")));
+    if (b > 0) emit("shell", "reaped", "consumer " + statusText(reap(b, "shell")));
+    kill(-w, SIGTERM);
+    emit("shell", "job-terminated", "[1] kill(-" + str(w) + ", SIGTERM) -> " + statusText(reap(w, "shell")));
+    emit("shell", "done", "all jobs reaped; no signal was sent outside the helper's own children");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     g_t0 = nowMs();
 #ifdef __linux__
@@ -511,6 +677,9 @@ int main(int argc, char** argv) {
     if (cmd == "pipe") return demoPipe();
     if (cmd == "fifo") return demoFifo();
     if (cmd == "threads") return demoThreads(argc > 2 ? std::atoi(argv[2]) : 4, argc > 3 ? std::atol(argv[3]) : 10);
-    std::printf("usage: ossim_helper fork|exec|wait|sleep|zombie|orphan|signal|shm|msg|pipe|fifo|threads <n> <base>\n");
+    if (cmd == "fsdemo") return demoFs();
+    if (cmd == "worker") return demoWorker(argc > 2 ? std::atoi(argv[2]) : 20, argc > 3 ? std::atoi(argv[3]) : 16, argc > 4 ? std::atoi(argv[4]) : 30);
+    if (cmd == "jobs") return demoJobs();
+    std::printf("usage: ossim_helper fork|exec|wait|sleep|zombie|orphan|signal|shm|msg|pipe|fifo|threads <n> <base>|fsdemo|worker <s> <MiB> <busy%%>|jobs\n");
     return cmd == "list" ? 0 : 2;
 }

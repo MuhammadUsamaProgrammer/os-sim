@@ -236,6 +236,34 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   1366x768 at 150%) whole pages scroll vertically by up to ~130 px; very narrow views draw smaller diagrams (some
   arrow labels overlap but nothing is clipped).
 
+## Phase 3 (specification: OS_SIM_PHASE_3_INTEGRATED_MODULES.md; details: docs/PHASE3_MODULES.md)
+
+### Stage 0: repository audit and baseline (done)
+- Baseline before any Phase 3 change (commit d7a2532): `make -j2` 0 warnings, `ctest` 14/14 passed,
+  `--selftest` ALL PASSED (301 checks), `--layout-report` 0 problems. No pre-existing failures.
+- Existing coverage audit: CPU scheduling (6 algorithms), page replacement, contiguous allocation, paging,
+  segmentation, demand paging, swapping, thrashing, Banker's / detection / recovery / RAG, synchronization
+  (7 mechanisms), process lifecycle, IPC, I/O, threads, disk scheduling.
+  Confirmed gaps: Multilevel Queue / Multilevel Feedback Queue scheduling, Readers-Writers, Dining Philosophers.
+  Deadlock: RAG, Banker's safety/request (avoidance), detection and recovery exist; prevention is only explained
+  (documented gap, no competing simulator added).
+- Regression contract: the responsive panel layout (PanelLayout.h, layout audit, layout self-tests) is kept for
+  every new page; new pages use ConfigPanel / PanelSplitter via assembleModule.
+
+### Stages 1-2: Storage & Files - shared virtual filesystem, Explorer, Access Control, Block Allocation, Recovery Lab (done)
+Done together because the Recovery Lab works on the same model (dependency, not a shortcut).
+- `core/vfs.*` (pure): one `VirtualFs` = virtual disk blocks with bytes and generations, free-space bitmap, inodes,
+  directory entries, users/groups, per-process descriptor tables, open-file table, deleted records; contiguous /
+  linked / indexed allocation (all-or-nothing, rollback on ENOSPC/EFBIG); path resolution with search permission and
+  symlink hop limit (ELOOP); owner/group/other precedence; chmod/chown/chgrp rules; hard links (not for directories);
+  unlink lifetime (link count + open references); metadata recovery with generation tracking; OSF1 signature carving;
+  restore into a NEW file avoiding evidence blocks; versioned text image with full validation; invariant checker.
+- GUI: new parent tab **Storage & Files** (`gui/StorageTab.*`, `gui/StorageViews.*`) with File Explorer, Access
+  Control, Block Allocation, Recovery Lab; all four read one `StorageArea::fs()` and refresh on `changed()`.
+- Live Linux: `ossim_helper fsdemo` (open/write/lseek/read/fstat/link/readdir/unlink-while-open/close in a private
+  mkdtemp directory), shown in Explorer > "Live Linux syscalls".
+- Tests: `test_vfs` (210 checks), `test_native` extended; self-test: 26 storage checks + drag/resize on the 4 pages.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
