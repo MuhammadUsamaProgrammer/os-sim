@@ -1173,6 +1173,7 @@ bool RecoveryPage::loadPreset(int i) {
     selRow_ = -1;
     area_->replaceFs(fs, "recovery preset: " + q(recoveryPresets()[i].name));
     log_->appendPlainText(QString("Preset '%1': %2").arg(q(recoveryPresets()[i].name), q(recoveryPresets()[i].description)));
+    header_->setStatus("Preset: " + q(recoveryPresets()[i].description), ui::semReady());
     if (i == 3) carve();
     selectCandidate(0);
     return true;

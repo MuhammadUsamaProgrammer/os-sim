@@ -39,6 +39,7 @@
 #include "IpcTab.h"
 #include "ThreadsTab.h"
 #include "StorageTab.h"
+#include "HeapLab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -1031,6 +1032,41 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3: Memory > Heap Laboratory (bounded arena allocator)
+    {
+        HeapLabPage* hl = memArea_->heapLab();
+        showTab(hl);
+        bool all = true;
+        for (int i = 0; i < (int)heapPresets().size(); ++i) all = hl->loadPreset(i) && all;
+        stCheck(all, "heap lab: all presets load and replay");
+        hl->loadPreset(1);
+        int offs[3];
+        for (int a = 0; a < 3; ++a) { hl->setFit((FitAlgo)a); offs[a] = hl->session().steps.back().result.offset; }
+        stCheck(offs[0] == 16 && offs[1] == 352 && offs[2] == 720, QString("heap lab: first / best / worst fit choose @%1 / @%2 / @%3").arg(offs[0]).arg(offs[1]).arg(offs[2]));
+        hl->loadPreset(2);
+        const HeapStep& fs = hl->session().steps.back();
+        stCheck(!fs.result.ok && fs.metrics.freeBytes == 768 && fs.metrics.largestFree == 320, "heap lab: fragmentation preset - 768 B free, request fails");
+        hl->loadPreset(0);
+        int before = (int)hl->session().steps.size();
+        stCheck(hl->applyOp("q = malloc 40") && (int)hl->session().steps.size() == before + 1, "heap lab: manual malloc appended");
+        stCheck(hl->applyOp("write q 0 OS-Sim") && hl->applyOp("read q 0 6") && hl->session().steps.back().result.data == "OS-Sim", "heap lab: write + read payload");
+        stCheck(!hl->applyOp("write q 38 overflow!"), "heap lab: out-of-bounds write refused");
+        hl->playback()->setPosition(3);
+        stCheck(hl->applyOp("z = calloc 2 8") && (int)hl->session().steps.size() == 5, "heap lab: operation after Previous starts a new branch");
+        stCheck(hl->undo() && (int)hl->session().steps.size() == 4, "heap lab: undo");
+        hl->setFamily(HeapFamily::Buddy);
+        stCheck(hl->session().cfg.family == HeapFamily::Buddy && hl->session().steps.back().integrity.empty(), "heap lab: family change resets and replays (buddy)");
+        hl->loadPreset(6);
+        hl->playback()->setPosition(2);
+        shot(this, "heap_buddy");
+        hl->loadPreset(7);
+        stCheck(!hl->session().steps[4].integrity.empty() && !hl->session().steps.back().result.ok, "heap lab: modelled corruption detected, heap refuses further use");
+        hl->loadPreset(3);
+        hl->playback()->setPosition(6);
+        shot(this, "heap_realloc");
+        hl->loadPreset(0);
+    }
+
     // ---- Phase 3: Storage & Files (one shared virtual filesystem behind four child views)
     {
         StorageArea* st = storage_;
@@ -1134,6 +1170,7 @@ int MainWindow::runSelfTest() {
                                 {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
                                 {io_, -1, "I/O"}, {disk_, -1, "Disk"},
+                                {memArea_->heapLab(), -1, "Memory > Heap Laboratory"},
                                 {storage_->explorer(), -1, "Storage > File Explorer"}, {storage_->access(), -1, "Storage > Access Control"},
                                 {storage_->blocks(), -1, "Storage > Block Allocation"}, {storage_->recovery(), -1, "Storage > Recovery Lab"}};
         for (const T& t : pages) {

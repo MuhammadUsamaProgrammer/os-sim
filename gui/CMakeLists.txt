@@ -26,7 +26,8 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     ThreadsTab.h ThreadsTab.cpp
     LayoutAudit.h LayoutAudit.cpp
     PanelLayout.h PanelLayout.cpp
-    StorageTab.h StorageTab.cpp StorageViews.h StorageViews.cpp)
+    StorageTab.h StorageTab.cpp StorageViews.h StorageViews.cpp
+    HeapLab.h HeapLab.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                              OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")

@@ -40,9 +40,11 @@ public:
     PlaybackBar* demandBar() const { return dpBar_; }
     QString reportText() const;
     QString csvSection() const;
+    class HeapLabPage* heapLab() const { return heap_; }   // Phase 3: Heap Laboratory
 signals:
     void logMessage(const QString& line);
 private:
+    class HeapLabPage* heap_ = nullptr;
     QWidget* buildAlloc();
     QWidget* buildPaging();
     QWidget* buildSeg();

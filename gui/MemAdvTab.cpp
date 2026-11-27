@@ -14,6 +14,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <sstream>
+#include "HeapLab.h"
 #include "MemAdvViews.h"
 #include "MemoryTab.h"
 #include "ModuleKit.h"
@@ -66,6 +67,9 @@ MemAdvArea::MemAdvArea(MemoryTab* pr, QWidget* parent) : QTabWidget(parent), mem
     addTab(buildDemand(), "Demand Paging");
     addTab(buildSwap(), "Swapping");
     addTab(buildThrash(), "Thrashing");
+    heap_ = new HeapLabPage;                       // Phase 3: application-level heap (not OS allocation)
+    addTab(heap_, "Heap Laboratory");
+    connect(heap_, &HeapLabPage::logMessage, this, &MemAdvArea::logMessage);
 }
 
 // ================================================================ allocation
@@ -830,7 +834,7 @@ bool MemAdvArea::rebuildThrash() {
 // ================================================================ report
 
 QString MemAdvArea::reportText() const {
-    QString out;
+    QString out = heap_->reportText();
     if (!alloc_.empty()) {
         out += "Contiguous allocation (" + allocOps_->text() + "):\n";
         for (const AllocResult& r : alloc_) {

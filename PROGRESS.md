@@ -264,6 +264,20 @@ Done together because the Recovery Lab works on the same model (dependency, not 
   mkdtemp directory), shown in Explorer > "Live Linux syscalls".
 - Tests: `test_vfs` (210 checks), `test_native` extended; self-test: 26 storage checks + drag/resize on the 4 pages.
 
+### Stage 3: Memory > Heap Laboratory (done)
+- `core/heap.*` (pure): allocator over a bounded `std::vector<uint8_t>` arena; headers really stored in the arena
+  (size, requested, magic, free-list link / handle); handles instead of raw pointers; malloc / calloc (overflow
+  check, zeroing) / realloc (in place shrink/grow, move with copy, failure keeps the old block) / free (null free,
+  double free and invalid handle detected); First / Best / Worst Fit over an address-ordered free list with a minimum
+  split size and immediate coalescing; separate buddy allocator (power-of-two split / merge, buddy = offset XOR size);
+  bounds-checked payload read/write; modelled overflow + integrity check (no real invalid access); metrics with
+  headers and padding as overhead and the fragmentation indicator undefined when nothing is free; deterministic
+  scripted sessions (playback, undo, new branch after Previous); 8 presets. Reuses `FitAlgo` names from memadv.
+- GUI: `gui/HeapLab.*` added as the last Memory sub-tab "Heap Laboratory" (heap map with header/payload/padding/free,
+  free-list arcs, realloc move arrow, change flash, buddy tree, zoom; inspector with payload bytes; history,
+  integrity check, outstanding allocations = potential leaks).
+- Tests: `test_heap` (107 checks); self-test: 10 heap checks + drag/resize on the page.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
