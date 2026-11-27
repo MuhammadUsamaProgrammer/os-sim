@@ -318,7 +318,26 @@ static void testPersistence() {
     CHECK(!VirtualFs::loadImage(evil, back, err));
 }
 
+static void testSampleImage() {
+    // samples/virtual_disk_sample.osvfs: the sample filesystem with one deleted file (loadable in the GUI)
+    FILE* f = std::fopen(samplePath("virtual_disk_sample.osvfs").c_str(), "r");
+    CHECK(f != nullptr);
+    if (!f) return;
+    std::string text;
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
+    std::fclose(f);
+    VirtualFs fs;
+    std::string err;
+    CHECK(VirtualFs::loadImage(text, fs, err));
+    CHECK(consistent(fs) && fs.deleted().size() == 1 && fs.analyse(0).cls == RecoveryClass::Full);
+    fs.setCurrentUser(1001);
+    CHECK(fs.readFile("/home/bob/report.osf").ok() && fs.readFile("/home/alice/notes.txt").err == FsErr::Access);
+}
+
 int main() {
+    testSampleImage();
     testBasics();
     testPermissions();
     testLinks();

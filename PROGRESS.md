@@ -262,7 +262,7 @@ Done together because the Recovery Lab works on the same model (dependency, not 
   Control, Block Allocation, Recovery Lab; all four read one `StorageArea::fs()` and refresh on `changed()`.
 - Live Linux: `ossim_helper fsdemo` (open/write/lseek/read/fstat/link/readdir/unlink-while-open/close in a private
   mkdtemp directory), shown in Explorer > "Live Linux syscalls".
-- Tests: `test_vfs` (210 checks), `test_native` extended; self-test: 26 storage checks + drag/resize on the 4 pages.
+- Tests: `test_vfs` (214 checks incl. the sample image), `test_native` extended; self-test: 26 storage checks + drag/resize on the 4 pages.
 
 ### Stage 3: Memory > Heap Laboratory (done)
 - `core/heap.*` (pure): allocator over a bounded `std::vector<uint8_t>` arena; headers really stored in the arena
@@ -319,6 +319,30 @@ Done together because the Recovery Lab works on the same model (dependency, not 
   task lanes, release/deadline/miss markers, playback cursor, ready queue in priority order, analysis, statistics,
   event log, RM-vs-EDF comparison on identical input.
 - Tests: `test_rtsched` (79 checks); self-test: 6 checks.
+
+### Stage 7: confirmed gaps, integration, documentation (done)
+- Gap audit (see Stage 0): added Multilevel Queue / Multilevel Feedback Queue (`core/mlq.*`, reuses scheduler types,
+  `appendTick`, `validateProcesses`; GUI Scheduling > Multilevel Queues reusing `GanttWidget`; can copy the CPU
+  Scheduling process list) and readers-writers + dining philosophers inside the EXISTING `SyncSim` (new ops, custom
+  violation rules, scenarios; the Synchronization tab shows them; `test_sync` unchanged, new `test_sync_classic`).
+  Deadlock prevention stays documented-only (no competing simulator).
+- Export: text report has Multilevel queues, Real-time scheduling, Job control and Storage sections; CSV has
+  "## Storage and files". Live process details are not exported.
+- Docs: `docs/PHASE3_MODULES.md` (architecture, models, assumptions, data sources, platform status, examples, viva
+  path, limitations), README, CLAUDE.md section 14, REPORT 6.7b / 7.7, VIVA_NOTES part E, screenshots in
+  `docs/screenshots/phase3/`.
+
+### Phase 3 verification (Linux, offscreen Qt)
+- `make -j2`: 0 warnings. `ctest`: 21/21 programs pass (new: test_vfs 214, test_heap 107, test_sysmon 59,
+  test_jobctl 98, test_rtsched 79, test_mlq 26, test_sync_classic 473 checks; test_native extended).
+- `--selftest`: 435 checks, ALL PASSED (the Phase 2 report counted 301; every earlier check is unchanged and passes).
+- `--layout-report`: 0 problems on all 24 pages at 1024x768, 1280x720, 1366x768, 1440x900, 1920x1080, 2560x1440
+  (100 %), 1092x574 / 1536x824 (125 %), 910x472 / 1280x680 (150 %), 960x500 / 1280x680 (200 %), and at font DPI 144;
+  dark theme checked by the self-test. Splitter drag / reset checks cover the 11 new pages.
+- Sanitizers: `-DSANITIZE=address` (address + undefined): 21/21 tests and the whole GUI `--selftest` pass with no
+  report; `-DSANITIZE=thread`: 21/21 tests pass with no ThreadSanitizer report (the Qt GUI is not run under TSAN).
+- Windows: NOT verified (no Windows machine); the Windows System Monitor backend is compiled only on WIN32.
+- Regression: Phase 2 tests and self-test sections and the responsive-layout checks pass unchanged.
 
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.

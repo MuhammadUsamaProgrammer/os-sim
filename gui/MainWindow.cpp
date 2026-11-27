@@ -1193,7 +1193,9 @@ int MainWindow::runSelfTest() {
         }
         sm->startMonitoring();
         waitFor([&] { return sm->snapshots() >= n + 3; }, 5000);
+        sm->setFilter("ossim");                        // screenshots show only OS-Sim's own processes (privacy)
         shot(this, "sysmon");
+        sm->setFilter(QString());
         sm->stopMonitoring();
         stCheck(sm->historySize() == 0 && !sm->monitoring(), "system monitor: stop clears the history");
         sm->setIntervalMs(1000);

@@ -19,6 +19,9 @@ semaphores, condition variables and a pipe, so the OS primitives are visible in 
 The **Synchronization** tab shows race conditions, Peterson's solution, mutex locks, binary and
 counting semaphores, the producer-consumer problem and monitors, one instruction at a time,
 and runs each primitive with real POSIX threads.
+**Phase 3** adds a **Storage & Files** tab (virtual filesystem, permissions, block allocation, recovery), a Heap
+Laboratory, a live System Monitor, Job Control, Real-Time (RM / EDF) and Multilevel Queue scheduling, and the
+readers-writers and dining-philosophers problems (details: `docs/PHASE3_MODULES.md`).
 
 ## Features
 
@@ -62,6 +65,25 @@ and runs each primitive with real POSIX threads.
     Paging & Address Translation, Segmentation, Demand Paging, Swapping and Thrashing.
   - **Live Linux Demos** (clearly labelled) run real `fork/exec/wait/sleep`, zombie, orphan, signals, System V
     shared memory and message queues, pipes, FIFOs and pthreads in a separate helper program (`ossim_helper`).
+- **Phase 3 subsystems** (details and assumptions: `docs/PHASE3_MODULES.md`):
+  - **Storage & Files** (new tab, one shared in-memory virtual disk): *File Explorer* (tree, breadcrumb, editor,
+    inode inspector, hard / symbolic links with loop detection, per-process descriptors with shared offsets, Live Linux
+    syscall demo in a private temp dir), *Access Control* (owner/group/other precedence, search permission on every path
+    component, parent-directory rules, chmod / chown / chgrp, effective-access matrix for every user), *Block Allocation*
+    (contiguous / linked / indexed, free-space bitmap, access traversal, side-by-side comparison on cloned disks),
+    *Recovery Lab* (deleted records with block generations, partial / full overwrite, signature carving, restore into a
+    new file, hard-link / open-descriptor lifetime).
+  - **Memory > Heap Laboratory:** malloc / calloc / realloc / free over a bounded byte arena with real in-arena headers,
+    First / Best / Worst Fit, splitting and coalescing, a buddy allocator, double-free / bounds / leak detection.
+  - **Processes > System Monitor** (Live System): CPU (total and per core), memory, disk I/O, sortable process table and
+    tree, alerts with debounce, sampled on a worker thread from `/proc` (Windows API backend compiled on Windows only,
+    unverified); an owned demo worker can be suspended / resumed / stopped. Host processes are read-only.
+  - **Processes > Job Control:** jobs, process groups, foreground terminal ownership, fg / bg / Ctrl-Z / Ctrl-C /
+    kill / wait in a safe educational shell, a pipeline over the IPC pipe model; Live Linux process-group demo.
+  - **Scheduling > Real-Time Scheduling:** Rate Monotonic and EDF, releases / deadlines / misses, utilization tests
+    with assumptions, RM-vs-EDF comparison, a fictional mission-control preset.
+  - **Scheduling > Multilevel Queues:** MLQ and MLFQ (demotion, preemption by higher queues, priority boost).
+  - **Synchronization:** readers-writers (readers' preference) and dining philosophers (deadlock vs asymmetric order).
 - **Export:** `File > Export report...` writes `<name>.txt` and `<name>.csv` with every section.
 - Bad input never crashes the program. It shows a warning dialog instead.
 
@@ -80,7 +102,7 @@ demo and the tests still build.
 ```bash
 mkdir -p build && cd build
 cmake .. && make -j2          # use make -j1 if the VM runs out of memory
-ctest --output-on-failure     # 14 test programs, all must pass
+ctest --output-on-failure     # 21 test programs, all must pass
 ./gui/ossim                   # the GUI
 QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest   # automatic GUI smoke test, exit code 0
 ```
@@ -95,7 +117,8 @@ Console demo (run from the project root so `samples/` is found):
 ./build/apps/ossim_console engine samples/processes_fcfs.csv rr 4 --real   # live thread log + fork/exec demo
 ./build/apps/ossim_console sync --real          # synchronization scenarios, comparison, real pthread demos
 ./build/apps/ossim_helper zombie                # one Live Linux demo on its own (fork exec wait sleep zombie
-                                                # orphan signal shm msg pipe fifo "threads 4 10")
+                                                # orphan signal shm msg pipe fifo "threads 4 10"
+                                                # Phase 3: fsdemo jobs "worker 10 16 30")
 ```
 
 Sanitizer builds (manual checks):
@@ -122,12 +145,19 @@ os-sim/
 │   ├── ipc.*            shared memory, message passing, pipes (M3)
 │   ├── memadv.*         allocation, paging / segmentation translation, demand paging, swapping, thrashing (M4)
 │   ├── iomodel.*        polling / interrupts / DMA (M5)
-│   └── threads.*        threading models (M6)
+│   ├── threads.*        threading models (M6)
+│   ├── vfs.*            Phase 3: virtual filesystem (Storage & Files: explorer, permissions, blocks, recovery)
+│   ├── heap.*           Phase 3: heap allocator over a bounded arena (free list fits, buddy)
+│   ├── sysmon.*         Phase 3: /proc parsers, CPU / rate deltas, alerts, bounded history
+│   ├── jobctl.*         Phase 3: job-control shell model (reuses the IPC pipe)
+│   ├── rtsched.*        Phase 3: RM / EDF real-time scheduling
+│   └── mlq.*            Phase 3: multilevel queue / feedback queue scheduling
 │   └── io_formats.*     sample file loaders/savers
 ├── engine/            pthreads + semaphores + mutex + condvar + pipe (library osengine)
 │   ├── engine.*         SimulationEngine, realProcessDemo (fork/exec/wait)
 │   ├── logger.*         PipeLogger (pipe IPC)
-│   └── sync_demo.*      real pthread demos of every synchronization primitive (cancellable)
+│   ├── sync_demo.*      real pthread demos of every synchronization primitive (cancellable)
+│   └── sysmon_native.*  Phase 3: System Monitor backends (Linux /proc, Windows API)
 ├── apps/console_main.cpp   console demo (ossim_console)
 ├── apps/ossim_helper.cpp   Live Linux demo helper (single-threaded, launched with QProcess)
 ├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab
@@ -188,7 +218,22 @@ press **Run** (or **Next** step by step, **Prev** to go back), change inputs to 
 *Live Linux demo* page, pick a demo and press **Start live demo** (Stop cancels it safely). A recommended viva
 demonstration order is in `docs/PHASE2_MODULES.md`.
 
+### Phase 3 views
+- **Storage & Files:** the four pages share one virtual disk. *Virtual disk* box: geometry and strategy, New virtual disk,
+  Load sample, Save / Load image (validated). Explorer: pick the current user, type a name or path, use the buttons;
+  the *Descriptors* tab opens files per process; *Live Linux syscalls* runs the real demo. Access Control: choose a
+  path, read the matrix, tick bits + chmod or apply a preset. Block Allocation: allocate on the shared disk or compare
+  the three strategies with a preset workload. Recovery Lab: load a preset, select a candidate, restore or carve.
+- **Memory > Heap Laboratory:** choose allocator, fit, arena and alignment; load a preset or write a script
+  (`a = malloc 100; free a`); apply manual operations (after Prev they start a new branch); click blocks in the map.
+- **Processes > System Monitor:** sampling starts when the page is shown (Start / Pause / Stop); filter, sort, use the
+  tree; the demo worker box starts a bounded worker that can be suspended, resumed, stopped or killed (confirmation).
+- **Processes > Job Control:** pick a scenario and play it, or type commands (`help`), or use the buttons.
+- **Scheduling > Real-Time / Multilevel Queues:** choose a preset, edit tasks / queues / processes, play the trace,
+  compare RM vs EDF.
+
 ### Synchronization tab
+0. Phase 3 added *Readers-writers* and *Dining philosophers* (naive deadlock vs asymmetric order) to the list.
 1. Choose an **algorithm** and a **sample scenario** (e.g. *Race condition > Lost update*). The
    scenario fills the parameters; changing a parameter switches to *Custom settings*.
 2. **Run** animates one instruction per tick (speed slider 50-1000 ms). **Pause** / **Resume**,

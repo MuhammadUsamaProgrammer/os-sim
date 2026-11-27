@@ -466,6 +466,19 @@ roles, inspectors / bottom areas via `ConfigPanel::wrap(...)`; never set a maxim
 never switch a scroll bar to AlwaysOff where content could overflow, keep view `minimumSizeHint()` small (the painters
 scale), and run `./gui/ossim --layout-report 1366x768,1024x768` plus `--selftest` (layout section) after GUI changes.
 
+## 14. Phase 3 (implemented): integrated subsystems and live system tools
+
+Specification: `OS_SIM_PHASE_3_INTEGRATED_MODULES.md`; documentation: `docs/PHASE3_MODULES.md`.
+Navigation: Scheduling, Processes and Memory are sub-tab areas (original page first); **Storage & Files** is the only
+new parent tab. New pure models: `vfs.*`, `heap.*`, `sysmon.*`, `jobctl.*` (reuses `IpcSim`), `rtsched.*`, `mlq.*`
+(reuses scheduler types); `sync.*` gained READERS_WRITERS and DINING_PHILOSOPHERS (keep `test_sync` unchanged; new
+checks go to `test_sync_classic`). Live code: `engine/sysmon_native.*` (read-only sampling) and `ossim_helper fsdemo |
+worker | jobs`. Rules: label Simulation vs Live System / Live Linux Demo; never signal or modify host processes or files
+(only QProcess-owned demo workers and helper-owned children / temp dirs); sampling runs off the GUI thread; the
+virtual filesystem never touches the host disk except an explicitly chosen image file; Windows code must stay behind
+`#ifdef _WIN32` and is unverified until run on Windows. Tests: `test_vfs`, `test_heap`, `test_sysmon`, `test_jobctl`,
+`test_rtsched`, `test_mlq`, `test_sync_classic`, `test_native`, and the GUI `--selftest` Phase 3 sections.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.
@@ -478,6 +491,8 @@ scale), and run `./gui/ossim --layout-report 1366x768,1024x768` plus `--selftest
 - [ ] Git history has one commit per stage.
 - [ ] Stage 11: the Synchronization tab works, `test_sync` and `test_sync_engine` pass, TSAN/ASAN clean.
 - [ ] Phase 2: all six modules work from real models, the 7 Phase 2 test programs and the GUI selftest pass.
+- [ ] Phase 3: the six new capabilities and the confirmed gaps work as integrated child views, the 7 Phase 3 test
+      programs, `test_native` and the GUI selftest pass, `--layout-report` shows 0 problems.
 
 ---
 

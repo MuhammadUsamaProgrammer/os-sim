@@ -378,3 +378,72 @@ with `QProcess`, because calling `fork()` in a multithreaded Qt program is unsaf
 55. **How does Linux map pthreads?** One-to-one: each pthread is a kernel task with its own TID. Our Many-to-One and
     Many-to-Many views are teaching models only.
 
+
+## Part E: Phase 3 modules (see `docs/PHASE3_MODULES.md` for the demonstration path)
+
+**How the code is organised.** Pure models in `core/` (`vfs`, `heap`, `sysmon`, `jobctl`, `rtsched`, `mlq`, extended
+`sync`); the GUI only displays them. Live parts are separated: `engine/sysmon_native.cpp` reads `/proc` (read-only) on
+a worker thread, and `apps/ossim_helper.cpp` performs real system calls on its own files and children only.
+
+56. **Inode vs directory entry?** The inode holds metadata and the block list; a directory entry is just a name that
+    points to an inode. Hard links are two names for one inode, so the link count is 2 (`/pub/readme.txt`).
+
+57. **Why can a file survive `unlink`?** The data is freed only when the link count AND the open references are 0. In
+    the Recovery Lab preset 5 both names are removed but a process still has it open; `close` releases it.
+
+58. **Why can bob not read a public 644 file in `/home/alice`?** Path resolution needs x (search) on every directory;
+    `/home/alice` is 700, so the lookup fails before the file's bits are even checked.
+
+59. **Owner `---`, group `rwx`: can the owner read?** No. Exactly one class applies - the owner class - classes are
+    not OR-ed.
+
+60. **Who may delete a read-only file?** Anyone with w and x on the PARENT directory; the file's own mode is
+    irrelevant for removing a name (no sticky bit in this model).
+
+61. **Contiguous vs linked vs indexed?** Contiguous: direct access, external fragmentation (fails with 27 free
+    blocks). Linked: no fragmentation, but k+1 reads to reach block k and pointer bytes in every block. Indexed: direct
+    access with one extra index read; one index block limits the file size (16 pointers with 64-byte blocks).
+
+62. **When is a deleted file recoverable?** While its blocks have not been reallocated. We prove it with the block
+    generation; a reused block is overwritten even if it is free again. A signature alone does not prove integrity.
+
+63. **Heap vs OS memory allocation?** The heap allocator manages bytes inside memory the process already owns (our
+    arena); the OS-level pages show how the kernel gives memory to processes (partitions, pages, segments).
+
+64. **Why headers and padding?** Every block needs metadata (size, state, free-list link) and alignment; both are
+    overhead, not usable payload. A remainder smaller than the minimum block is not split off (becomes padding).
+
+65. **First vs Best vs Worst Fit?** First takes the first hole that fits (fast), Best the smallest (leaves tiny holes),
+    Worst the largest (keeps big remainders). Preset 2 shows the three choices for the same request.
+
+66. **Buddy allocator?** Sizes are powers of two; a block is split in halves until it fits; the buddy of a block at
+    offset o with size s is at o XOR s; free buddies merge. Fast merging, but internal fragmentation.
+
+67. **Why does process CPU % exceed 100 %?** It is measured against ONE core; a process with three busy threads
+    can use 300 % of one core. Divide by the number of CPUs for the machine share.
+
+68. **Why can RSS values not be summed?** Shared pages (libraries, shared memory) are counted in every process that
+    maps them.
+
+69. **Why does the first sample say "warming up"?** CPU % and rates are deltas between two timestamped samples.
+
+70. **Job id vs PID vs PGID?** The job id is the shell's number (%1); the PID is the kernel's id; the PGID groups all
+    processes of one job so one signal (Ctrl-Z) reaches the whole pipeline.
+
+71. **Stopped vs sleeping vs background?** Stopped = paused by a signal (SIGTSTP / SIGSTOP); sleeping = waiting for an
+    event; a background job runs normally unless it reads the terminal (SIGTTIN stops it).
+
+72. **RM vs EDF?** RM: fixed priority by period (shorter = higher); EDF: dynamic priority by absolute deadline. In
+    A(2,5) B(4,7) RM misses at t = 7, EDF does not (U = 34/35 <= 1).
+
+73. **Is RM's bound necessary?** No, only sufficient: U <= n(2^(1/n)-1) guarantees RM; above it RM may still
+    succeed. EDF's U <= 1 is exact for implicit deadlines under the stated assumptions.
+
+74. **MLQ vs MLFQ?** MLQ keeps each process in a fixed queue; MLFQ moves processes: a full quantum means CPU-bound,
+    so it is demoted; the priority boost prevents starvation.
+
+75. **Why can the naive dining philosophers deadlock?** All four conditions hold, including the circular wait when
+    everyone holds the left chopstick. Taking chopsticks in a different order for odd philosophers breaks the cycle.
+
+76. **Why can a writer starve in readers-writers?** With readers' preference new readers enter while others read;
+    read_count never reaches 0, so rw_mutex is never released for the writer.

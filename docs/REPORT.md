@@ -350,6 +350,18 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | `test_threads` | 35 | 12 / 4 / 6 ticks; context / core exclusivity every tick; no lost or duplicated work; blocking 15 vs 7; join order; migrations |
 | `test_native` | 64 | real fork / exec (same PID) / wait / zombie (`Z`) / orphan (subreaper) / signal / shm (HELLO) / msg (ENOMSG, FIFO) / pipe (EOF) / FIFO / pthreads (arguments and results), twice each |
 
+### 6.7b Phase 3 tests (details: `docs/PHASE3_MODULES.md`)
+
+| Program | Checks | What is asserted (real results) |
+|---|---|---|
+| `test_vfs` | 214 | create / read / write / rename / copy / rmdir under all 3 strategies; permission precedence (owner `---` denied even with group `rwx`); directory search vs list (711 / 744); chmod / chown / chgrp rules; hard / symbolic / dangling links, ELOOP; descriptor offsets, `dup`, per-process tables, unlink while open; ENOSPC / EFBIG rollback; contiguous preset fails "largest run is 12" while linked / indexed succeed; recovery fixtures intact (verified bytes), partial (86 of 150 bytes), full overwrite, reuse-and-free, carving (unknown vs verified); restore never overwrites, preview on ENOSPC; image round trip and rejection of corrupt images; invariants after every scenario |
+| `test_heap` | 107 | aligned payloads (8 / 16 / 32), no overlap, accounting identity; split threshold; coalescing with both neighbours; First / Best / Worst Fit pick @16 / @352 / @720; fragmentation 768 free, largest 320, request fails; calloc zeroing and overflow; realloc in place / move with preserved data / failure keeps old; double / invalid free, bounds, leaks; buddy split chain, buddy = XOR, full merge; modelled corruption detected |
+| `test_sysmon` | 59 | /proc fixtures (names with `)`, missing fields, partitions skipped); CPU 50 % / per core 100 % and 0 %; process 50 % and 300 % of one core; zero interval and counter reset invalid; vanished processes; PID reuse; debounce (no alert storm) and hysteresis; bounded history; Linux smoke test sees its own PID |
+| `test_jobctl` | 98 | job id vs PID / PGID; background -> stop -> resume -> fg -> complete; Ctrl-Z / Ctrl-C; one foreground group in every snapshot; SIGTTIN; pipeline order `ABCDEF`, writer blocks on a full pipe, EOF; refused PIDs / commands; wait on a stopped job refused |
+| `test_rtsched` | 79 | A(2,5) B(4,7) H=35: U = 34/35, RM preemption at 5 and miss at 7 (B done at 8), EDF no miss; deadline equality on time; idle / offsets; RM and EDF ties; horizon semantics; overload with continue / abort (each miss counted once); no duplicate execution; validation |
+| `test_mlq` | 26 | MLQ trace and average waiting 3.4; MLFQ trace (P1 demoted twice, done at 19); preemption by higher queues; priority boost; clamping; idle gap; validation |
+| `test_sync_classic` | 473 | readers share and the writer waits; 150 random readers-writers runs without violation; naive philosophers deadlock (every chopstick held, one waiter each); asymmetric order completes; 150 random runs each |
+
 ### 6.8 Sanitizers and GUI smoke test
 - `-DSANITIZE=thread`: all test programs pass (including the real synchronization demos), no ThreadSanitizer report.
 - `-DSANITIZE=address` (address + undefined): all tests pass and the whole GUI `--selftest` exits 0 with no report.
@@ -461,6 +473,19 @@ producer-consumer and monitor 20 of 20 items with equal checksums.
   multiprogramming model peak utilisation 1.00 at degree 2, 0.10 at degree 12.
 - Threads: 12 / 4 / 6 ticks (Many-to-One / One-to-One / Many-to-Many); with a blocking call 15 vs 7.
 
+### 7.7 Phase 3 results (real output)
+- Real-time, A(C=2,T=D=5) and B(C=4,T=D=7), horizon 35 (U = 97.14 %): RM misses B's first deadline at t = 7
+  (B completes late at 8); EDF meets every deadline. RM bound for n = 2 is 0.8284, so RM is not guaranteed.
+- Block allocation, 36 blocks x 128 B: contiguous allocation of a 1600-byte file fails with 27 free blocks (largest
+  run 12); linked (13 blocks, 4-byte pointers) and indexed (13 data + 1 index block) succeed.
+- Heap, 1024-byte arena, alignment 16: three holes 304 / 96 / 208 B and a 320 B tail - a 70-byte request is placed
+  at payload @16 (First Fit), @352 (Best Fit), @720 (Worst Fit). Fragmentation preset: 768 B free, largest block 320 B,
+  a 400-byte request fails.
+- MLQ preset: average waiting 3.4 with 2 preemptions; MLFQ preset: P1 (burst 12) demoted twice, completes at 19.
+- Dining philosophers (random order, 150 seeds): the naive order deadlocked in 10 runs, the asymmetric order in none.
+- GUI self-test: 435 checks pass (301 reported before Phase 3); layout report: 0 problems on 24 pages at 10 window sizes and
+  4 scaling factors.
+
 ## 8. Limitations
 
 - The animated engine **replays** a precomputed schedule; the threads do not make scheduling
@@ -485,6 +510,9 @@ producer-consumer and monitor 20 of 20 items with equal checksums.
 - Phase 2: see the "Limitations" section of `docs/PHASE2_MODULES.md` (static disk batch, single CPU / device /
   DMA channel, modelled ids and capacities in IPC, labelled cost and utilisation models, Linux-only live demos,
   offscreen-only visual checks).
+
+- Phase 3: Windows System Monitor backend not verified on Windows; job-control fg / bg modelled (no PTY); the virtual
+  filesystem and the heap are teaching models (see `docs/PHASE3_MODULES.md`, section 11).
 
 ## 9. Conclusion
 
