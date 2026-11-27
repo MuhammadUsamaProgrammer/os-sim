@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton;
-class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab;
+class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -38,6 +38,7 @@ private:
     IoTab* io_;
     MemAdvArea* memArea_;
     IpcTab* ipc_;
+    ThreadsTab* threads_;
     void showMemoryTab();
     QPlainTextEdit* log_;
     QAction* darkAction_ = nullptr;     // View > Dark theme (checkable)

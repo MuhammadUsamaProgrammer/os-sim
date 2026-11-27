@@ -32,6 +32,7 @@
 #include "IoTab.h"
 #include "MemAdvTab.h"
 #include "IpcTab.h"
+#include "ThreadsTab.h"
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
@@ -50,12 +51,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     proc_ = new ProcessTab;
     io_ = new IoTab;
     ipc_ = new IpcTab;
+    threads_ = new ThreadsTab;
     tabs_->addTab(sched_, "Scheduling");
     memArea_ = new MemAdvArea(mem_);              // page replacement + Phase 2 memory sub-tabs
     tabs_->addTab(memArea_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
     tabs_->insertTab(1, proc_, "Processes");
+    tabs_->addTab(threads_, "Threads");
     tabs_->addTab(ipc_, "IPC");
     tabs_->addTab(io_, "I/O");
     tabs_->addTab(disk_, "Disk");
@@ -81,6 +84,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(io_, &IoTab::logMessage, this, &MainWindow::appendLog);
     connect(memArea_, &MemAdvArea::logMessage, this, &MainWindow::appendLog);
     connect(ipc_, &IpcTab::logMessage, this, &MainWindow::appendLog);
+    connect(threads_, &ThreadsTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -347,7 +351,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 12. IPC
     T << "\n=== IPC ===\n" << ipc_->reportText();
     C << "\n" << ipc_->csvSection();
-    // 13. Event log
+    // 13. Threading models
+    T << "\n=== Threading models ===\n" << threads_->reportText();
+    C << "\n" << threads_->csvSection();
+    // 14. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -811,6 +818,30 @@ int MainWindow::runSelfTest() {
         shot(this, "ipc_live_demo");
     }
 
+    // ---- Phase 2, M6: Multithreading
+    tabs_->setCurrentWidget(threads_);
+    {
+        const int expect[3] = {12, 4, 6};
+        for (int p = 0; p < 3; ++p)
+            stCheck(threads_->loadPreset(p) && threads_->result()->m.completion == expect[p],
+                    QString("threads preset %1 completes in %2 ticks").arg(p + 1).arg(expect[p]));
+    }
+    threads_->playback()->setPosition(3);
+    shot(this, "threads_many_to_many");
+    threads_->playback()->setIntervalMs(60);
+    threads_->playback()->run();
+    stCheck(waitFor([&] { return threads_->playback()->position() == threads_->playback()->length(); }, 5000) &&
+            threads_->statusText().contains("all threads completed in 6 ticks"), "threads: playback to the final state");
+    stCheck(threads_->loadPreset(3) && threads_->result()->m.stalledTicks > 0, "threads: blocking call stalls Many-to-One");
+    stCheck(threads_->loadPreset(4) && threads_->result()->m.stalledTicks == 0, "threads: blocking call does not stall One-to-One");
+    stCheck(threads_->loadPreset(5) && threads_->result()->completionOrder == std::vector<int>({1, 2, 0}), "threads: join order A, B, main");
+    stCheck(threads_->comparison().size() == 3, "threads: model comparison has 3 rows");
+    if (NativeRunner::available()) {
+        bool ok = threads_->startDemo(4, 10) && waitFor([&] { return !threads_->demoRunning(); }, 10000);
+        stCheck(ok && threads_->demoExitCode() == 0 && threads_->demoCorrectResults() == 4, "threads live demo: 4 pthreads joined, results correct");
+        shot(this, "threads_live_demo");
+    }
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -828,10 +859,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== IPC", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== IPC", "=== Threading models", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging", "## IPC",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging", "## IPC", "## Threading models",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");
