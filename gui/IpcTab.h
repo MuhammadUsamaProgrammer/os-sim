@@ -16,7 +16,7 @@ public:
     explicit IpcView(QWidget* parent = nullptr);
     void setSnapshot(const IpcConfig* cfg, const IpcSnapshot* s, int animMs);
     QSize sizeHint() const override { return QSize(640, 400); }
-    QSize minimumSizeHint() const override { return QSize(420, 300); }
+    QSize minimumSizeHint() const override { return QSize(280, 180); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

@@ -14,7 +14,7 @@ public:
     void setResults(const std::vector<const AllocResult*>& rs, int focus);
     void setStep(int step, int animMs);
     QSize sizeHint() const override { return QSize(640, 360); }
-    QSize minimumSizeHint() const override { return QSize(400, 260); }
+    QSize minimumSizeHint() const override { return QSize(260, 170); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
@@ -34,7 +34,7 @@ public:
     void setSegmentation(const std::vector<SegmentDesc>* segs, uint64_t phys, const XlateResult* r, int segment);
     void setStep(int shownSteps, int animMs);
     QSize sizeHint() const override { return QSize(680, 420); }
-    QSize minimumSizeHint() const override { return QSize(440, 300); }
+    QSize minimumSizeHint() const override { return QSize(260, 170); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
@@ -59,7 +59,7 @@ public:
     void setResult(const DpResult* r);
     void setStep(int step, int animMs);
     QSize sizeHint() const override { return QSize(640, 400); }
-    QSize minimumSizeHint() const override { return QSize(420, 300); }
+    QSize minimumSizeHint() const override { return QSize(260, 170); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

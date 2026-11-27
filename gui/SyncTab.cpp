@@ -27,6 +27,7 @@
 #include "Style.h"
 #include "SyncBridge.h"
 #include "SyncViews.h"
+#include "PanelLayout.h"
 
 static QSpinBox* makeSpin(int lo, int hi, int v, const QString& tip = QString()) {
     auto* s = new QSpinBox;
@@ -134,13 +135,7 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     ll->addWidget(paramBox);
     ll->addWidget(ctlBox);
     ll->addWidget(expBox, 1);
-    auto* leftScroll = new QScrollArea;
-    leftScroll->setWidget(leftW);
-    leftScroll->setWidgetResizable(true);
-    leftScroll->setFrameShape(QFrame::NoFrame);
-    leftScroll->setMinimumWidth(300);
-    leftScroll->setMaximumWidth(380);
-    leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* leftScroll = new ConfigPanel(leftW);   // shared responsive panel (no width cap, scrolls as needed)
 
     // ================= right: status, process cards, scene / code / variables, bottom pages
     status_ = new QLabel;
@@ -203,12 +198,9 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     codeVars->setStretchFactor(0, 3);
     codeVars->setStretchFactor(1, 2);
     codeVars->setSizes({330, 170});
-    auto* middle = new QSplitter(Qt::Horizontal);
-    middle->addWidget(sceneW);
-    middle->addWidget(codeVars);
-    middle->setStretchFactor(0, 3);
-    middle->setStretchFactor(1, 2);
-    middle->setSizes({580, 400});
+    auto* middle = new PanelSplitter(Qt::Horizontal, "Synchronization/mid");
+    middle->addPanel(sceneW, PanelSplitter::Center);
+    middle->addPanel(ConfigPanel::wrap(codeVars, "inspectorPanel"), PanelSplitter::Inspector, 1, 0.42);
 
     // ---- bottom pages
     bottom_ = new QTabWidget;
@@ -338,20 +330,19 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     demoW->setMinimumHeight(300);
     bottom_->addTab(scrolled(demoW), "Real POSIX demo");
 
-    auto* right = new QSplitter(Qt::Vertical);
-    right->addWidget(topW);
-    right->addWidget(middle);
-    right->addWidget(bottom_);
-    right->setStretchFactor(0, 0);
-    right->setStretchFactor(1, 3);
-    right->setStretchFactor(2, 2);
-    right->setSizes({44, 500, 170});
+    auto* vsplit = new PanelSplitter(Qt::Vertical, "Synchronization/v");
+    vsplit->addPanel(middle, PanelSplitter::Center, 3);
+    vsplit->addPanel(ConfigPanel::wrap(bottom_, "detailPanel"), PanelSplitter::Detail, 1);
+    auto* right = new QWidget;                       // status lines stay above the resizable area
+    auto* rl = new QVBoxLayout(right);
+    rl->setContentsMargins(0, 0, 0, 0);
+    rl->setSpacing(4);
+    rl->addWidget(topW);
+    rl->addWidget(vsplit, 1);
 
-    auto* split = new QSplitter(Qt::Horizontal);
-    split->addWidget(leftScroll);
-    split->addWidget(right);
-    split->setStretchFactor(0, 0);
-    split->setStretchFactor(1, 1);
+    auto* split = new PanelSplitter(Qt::Horizontal, "Synchronization/h");
+    split->addPanel(leftScroll, PanelSplitter::Config);
+    split->addPanel(right, PanelSplitter::Center);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->addWidget(split);

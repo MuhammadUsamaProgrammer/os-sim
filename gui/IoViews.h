@@ -18,7 +18,7 @@ public:
     void setResult(const IoResult* r);
     void setTick(int shownTicks, int animMs);  // shownTicks = number of ticks completed
     QSize sizeHint() const override { return QSize(640, 400); }
-    QSize minimumSizeHint() const override { return QSize(440, 300); }
+    QSize minimumSizeHint() const override { return QSize(280, 180); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

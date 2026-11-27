@@ -17,7 +17,7 @@
 #include <QListWidget>
 #include <QWidget>
 
-class QLabel; class QPushButton; class QSlider; class QTimer;
+class QLabel; class QPushButton; class QSlider; class QTimer; class QBoxLayout;
 
 namespace ui {
 inline QColor semIdle()    { return QColor("#9aa0a6"); }   // neutral / idle / New
@@ -41,6 +41,7 @@ public:
     void setIntervalMs(int ms);
     // Duration a view should use to animate one forward step.
     int animMs() const;
+    QSize minimumSizeHint() const override;       // the two-row minimum, so it never forces width
 
 public slots:
     void run();
@@ -54,9 +55,13 @@ signals:
     void resetRequested();                         // owner rebuilds the trace from its inputs
     void finished();                               // playback reached the last step
 
+protected:
+    void resizeEvent(QResizeEvent* e) override;   // one row when wide, two rows when narrow
 private:
     void go(int pos, bool forward);
     void updateUi();
+    QBoxLayout* outer_;
+    QWidget *buttons_, *scrubRow_;
     int length_ = 0, pos_ = 0;
     bool paused_ = false;
     QTimer* timer_;
@@ -78,9 +83,11 @@ public:
 //   [configuration (scrollable) | central visualization | inspector]   (resizable splitters)
 //   playback bar (optional)
 //   bottom pages (log / comparison / native demo ...)
-// All arguments except owner/header may be nullptr.
+// All arguments except owner/header may be nullptr. The panels use PanelLayout.h: the
+// configuration panel scrolls (both directions as needed) and every splitter is resizable,
+// restorable (double-click a handle) and remembered under layoutId (default: header title).
 void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* center,
-                    QWidget* inspector, PlaybackBar* bar, QWidget* bottom);
+                    QWidget* inspector, PlaybackBar* bar, QWidget* bottom, const QString& layoutId = QString());
 // Wraps a widget in a group box with a title.
 QWidget* titledBox(const QString& title, QWidget* content);
 
@@ -91,6 +98,8 @@ public:
     void setMode(bool liveLinux);            // badge: "Simulation" or "Live Linux Demo"
     void setStatus(const QString& text, const QColor& color = QColor());
     QString status() const;
+    QString title() const { return title_; }
 private:
     QLabel *badge_, *status_;
+    QString title_;
 };

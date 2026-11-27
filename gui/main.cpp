@@ -18,6 +18,17 @@ int main(int argc, char** argv) {
     ui::applyTheme(dark);
     MainWindow w;
     if (selftest) return w.runSelfTest();
+    // --layout-report 1366x768,1920x1080 : audit every tab at those window sizes (exit 1 on problems)
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::strcmp(argv[i], "--layout-report") == 0) {
+            ui::selfTestMode() = true;
+            QList<QSize> sizes;
+            for (const QString& s : QString(argv[i + 1]).split(',', Qt::SkipEmptyParts)) {
+                QStringList wh = s.split('x');
+                if (wh.size() == 2) sizes << QSize(wh[0].toInt(), wh[1].toInt());
+            }
+            return w.layoutReport(sizes).isEmpty() ? 0 : 1;
+        }
     w.show();
     return app.exec();
 }

@@ -16,7 +16,7 @@ static const double kProcR = 22, kResHalf = 24;
 RagView::RagView(QWidget* parent) : QGraphicsView(parent) {
     setScene(new QGraphicsScene(this));
     setRenderHint(QPainter::Antialiasing);
-    setMinimumSize(300, 220);
+    setMinimumSize(220, 180);
 }
 
 void RagView::resizeEvent(QResizeEvent* e) {

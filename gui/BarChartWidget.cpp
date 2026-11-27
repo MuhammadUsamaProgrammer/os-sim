@@ -4,7 +4,7 @@
 #include <cmath>
 #include "Style.h"
 
-BarChartWidget::BarChartWidget(QWidget* parent) : QWidget(parent) { setMinimumHeight(200); }
+BarChartWidget::BarChartWidget(QWidget* parent) : QWidget(parent) { setMinimumHeight(140); }
 
 void BarChartWidget::setData(const QString& title, const QStringList& categories, const QStringList& series,
                              const std::vector<std::vector<double>>& values, const std::vector<QColor>& colors) {

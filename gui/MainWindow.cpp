@@ -13,6 +13,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QRegularExpression>
+#include <QScreen>
+#include <QScrollBar>
 #include <QSettings>
 #include <QToolButton>
 #include <QStatusBar>
@@ -33,6 +36,8 @@
 #include "MemAdvTab.h"
 #include "IpcTab.h"
 #include "ThreadsTab.h"
+#include "LayoutAudit.h"
+#include "PanelLayout.h"
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
@@ -40,7 +45,12 @@
 // Creates the tabs, the log dock (read-only, monospace) and the menus.
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("OS-Sim: Operating System Simulator");
-    setMinimumSize(1100, 700);
+    // No hard minimum size: the layouts are responsive (see PanelLayout.h). Start at a size that
+    // fits the available screen area (logical pixels, so display scaling is respected).
+    if (QScreen* scr = QGuiApplication::primaryScreen()) {
+        QRect a = scr->availableGeometry();
+        resize(std::min(a.width() * 9 / 10, 1600), std::min(a.height() * 9 / 10, 1000));
+    }
 
     tabs_ = new QTabWidget;
     sched_ = new SchedulingTab;
@@ -52,16 +62,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     io_ = new IoTab;
     ipc_ = new IpcTab;
     threads_ = new ThreadsTab;
-    tabs_->addTab(sched_, "Scheduling");
+    tabs_->addTab(new PageScroll(sched_), "Scheduling");
     memArea_ = new MemAdvArea(mem_);              // page replacement + Phase 2 memory sub-tabs
-    tabs_->addTab(memArea_, "Memory");
-    tabs_->addTab(dead_, "Deadlock");
-    tabs_->addTab(sync_, "Synchronization");
-    tabs_->insertTab(1, proc_, "Processes");
-    tabs_->addTab(threads_, "Threads");
-    tabs_->addTab(ipc_, "IPC");
-    tabs_->addTab(io_, "I/O");
-    tabs_->addTab(disk_, "Disk");
+    tabs_->addTab(new PageScroll(memArea_), "Memory");
+    tabs_->addTab(new PageScroll(dead_), "Deadlock");
+    tabs_->addTab(new PageScroll(sync_), "Synchronization");
+    tabs_->insertTab(1, new PageScroll(proc_), "Processes");
+    tabs_->addTab(new PageScroll(threads_), "Threads");
+    tabs_->addTab(new PageScroll(ipc_), "IPC");
+    tabs_->addTab(new PageScroll(io_), "I/O");
+    tabs_->addTab(new PageScroll(disk_), "Disk");
     setCentralWidget(tabs_);
 
     log_ = new QPlainTextEdit;
@@ -73,7 +83,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dock->setWidget(log_);
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::BottomDockWidgetArea, dock);
-    resizeDocks({dock}, {170}, Qt::Vertical);
+    // The shared event log starts small (about 12% of the window height); it can be resized or floated.
+    log_->setMinimumHeight(fontMetrics().height() * 3);
+    resizeDocks({dock}, {std::max(fontMetrics().height() * 5, height() * 12 / 100)}, Qt::Vertical);
 
     connect(sched_, &SchedulingTab::logMessage, this, &MainWindow::appendLog);
     connect(mem_, &MemoryTab::logMessage, this, &MainWindow::appendLog);
@@ -117,9 +129,21 @@ MainWindow::~MainWindow() {
     for (QObject* o : kids) o->disconnect(this);
 }
 
+// Shows the top-level tab whose page is `page` (pages sit inside a PageScroll container).
+void MainWindow::showTab(QWidget* page) {
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (pageOf(i) == page) { tabs_->setCurrentIndex(i); return; }
+}
+
+// The module widget of tab i (unwrapping the PageScroll container).
+QWidget* MainWindow::pageOf(int i) const {
+    auto* ps = qobject_cast<PageScroll*>(tabs_->widget(i));
+    return ps ? ps->widget() : tabs_->widget(i);
+}
+
 // Selects the Memory area and its "Page replacement" sub-tab (the original Memory tab).
 void MainWindow::showMemoryTab() {
-    tabs_->setCurrentWidget(memArea_);
+    showTab(memArea_);
     memArea_->setCurrentWidget(mem_);
 }
 
@@ -170,26 +194,26 @@ bool MainWindow::loadSample(const QString& path) {
     bool ok = false;
     if (name.startsWith("processes_")) {
         ok = sched_->loadCsv(path);
-        tabs_->setCurrentWidget(sched_);
+        showTab(sched_);
     } else if (name.startsWith("refstring_")) {
         ok = mem_->loadRefFile(path);
         showMemoryTab();
     } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
         ok = dead_->loadFile(path);
-        tabs_->setCurrentWidget(dead_);
+        showTab(dead_);
     } else if (name.startsWith("lifecycle_")) {
         ok = proc_->loadFile(path);
-        tabs_->setCurrentWidget(proc_);
+        showTab(proc_);
     } else if (name.startsWith("disk_")) {
         ok = disk_->loadFile(path);
-        tabs_->setCurrentWidget(disk_);
+        showTab(disk_);
     } else if (name.startsWith("requests_")) {
         // The integrated sample is designed for processes_srtf.csv with Round Robin q=2.
         ok = sched_->loadCsv(ui::samplesDir() + "/processes_srtf.csv");
         sched_->setAlgorithm(Algo::RR);
         sched_->setQuantum(2);
         sched_->setIntegratedOptions(path, true, true, 6, 5);
-        tabs_->setCurrentWidget(sched_);
+        showTab(sched_);
     } else {
         ui::info(this, "This sample is used by a tab that is not finished yet: " + name);
         return false;
@@ -409,6 +433,74 @@ template <class F> static bool waitFor(F cond, int timeoutMs) {
     return cond();
 }
 
+QStringList MainWindow::layoutReport(const QList<QSize>& sizes, bool print) {
+    QStringList problems;
+    show();
+    for (const QSize& sz : sizes) {
+        resize(sz);
+        QApplication::processEvents();
+        QApplication::processEvents();
+        if (width() > sz.width() + 1 || height() > sz.height() + 1)
+            problems << QString("%1x%2: the window cannot shrink to this size (it is %3x%4, minimum %5x%6)")
+                            .arg(sz.width()).arg(sz.height()).arg(width()).arg(height())
+                            .arg(minimumSizeHint().width()).arg(minimumSizeHint().height());
+        auto check = [&](QWidget* page, const QString& name) {
+            QApplication::processEvents();
+            QApplication::processEvents();
+            LayoutAuditResult a = auditControls(page, QString("%1x%2 %3").arg(sz.width()).arg(sz.height()).arg(name));
+            int pageScrollH = 0, pageScrollV = 0;
+            for (QWidget* p = page; p; p = p->parentWidget())
+                if (auto* ps = qobject_cast<PageScroll*>(p)) {
+                    pageScrollH = ps->horizontalScrollBar()->maximum();
+                    pageScrollV = ps->verticalScrollBar()->maximum();
+                }
+            if (!qEnvironmentVariable("OSSIM_LAYOUT_DEBUG").isEmpty()) {
+                // the deepest widgets that demand a large minimum width / height (layout culprits)
+                int lim = qEnvironmentVariableIntValue("OSSIM_LAYOUT_DEBUG");
+                for (QWidget* w : page->findChildren<QWidget*>()) {
+                    if (!w->isVisible()) continue;
+                    QSize m = w->minimumSizeHint().expandedTo(w->minimumSize());
+                    if (m.width() < lim && m.height() < lim * 3 / 4) continue;
+                    bool childBig = false;
+                    for (QWidget* c : w->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+                        QSize cm = c->minimumSizeHint().expandedTo(c->minimumSize());
+                        if (c->isVisible() && ((cm.width() >= m.width() - 30 && m.width() >= lim) || (cm.height() >= m.height() - 30 && m.height() >= lim * 3 / 4))) childBig = true;
+                    }
+                    if (!childBig) std::printf("[layout-debug] %s: %s '%s' min %dx%d\n", qPrintable(name), w->metaObject()->className(),
+                                               qPrintable(w->objectName()), m.width(), m.height());
+                }
+            }
+            problems << a.problems;
+            if (print)
+                std::printf("[layout] %4dx%-4d %-34s page min %4dx%-4d page scroll %3d/%3d | controls %3d, by scrolling %2d, INACCESSIBLE %d\n",
+                            sz.width(), sz.height(), qPrintable(name), page->minimumSizeHint().width(), page->minimumSizeHint().height(),
+                            pageScrollH, pageScrollV, a.checked, a.needScroll, (int)a.problems.size());
+            if (!qEnvironmentVariable("OSSIM_SHOTS").isEmpty()) {
+                QString dir = qEnvironmentVariable("OSSIM_SHOTS");
+                QDir().mkpath(dir);
+                QString f = QString("%1/layout_%2x%3_%4.png").arg(dir).arg(sz.width()).arg(sz.height()).arg(QString(name).replace(QRegularExpression("[^A-Za-z0-9]+"), "_"));
+                grab().save(f);
+            }
+        };
+        for (int i = 0; i < tabs_->count(); ++i) {
+            tabs_->setCurrentIndex(i);
+            if (pageOf(i) == memArea_) {
+                for (int k = 0; k < memArea_->count(); ++k) {
+                    memArea_->setCurrentIndex(k);
+                    check(memArea_->widget(k), "Memory > " + memArea_->tabText(k).replace("&&", "&"));
+                }
+            } else {
+                check(tabs_->widget(i), tabs_->tabText(i));   // audit through the page scroll container
+            }
+        }
+    }
+    if (print) {
+        for (const QString& p : problems) std::printf("[layout] PROBLEM %s\n", qPrintable(p));
+        std::printf("[layout] %d problem(s)\n", (int)problems.size());
+    }
+    return problems;
+}
+
 int MainWindow::runSelfTest() {
     ui::selfTestMode() = true;
     g_stFail = 0;
@@ -530,7 +622,7 @@ int MainWindow::runSelfTest() {
     shot(this, "integrated_avoidance_off");
     stCheck(dead_->rowPids() == std::vector<int>({1, 2, 3, 4}), "Deadlock tab shows the integrated state with the same pids");
     stCheck(dead_->detect() && dead_->lastDetection()->deadlocked, "integrated state is deadlocked in the Deadlock tab");
-    tabs_->setCurrentWidget(dead_);
+    showTab(dead_);
     shot(this, "integrated_in_deadlock_tab");
     w = ui::warningCount();
     sched_->setIntegratedOptions(sd + "/does_not_exist.csv", true, true, 6, 5);
@@ -538,7 +630,7 @@ int MainWindow::runSelfTest() {
     sched_->setIntegratedOptions(sd + "/requests_integrated.csv", true, true, 6, 5);
 
     // Synchronization: every algorithm and scenario, lost update, Peterson, controls, comparison, real threads
-    tabs_->setCurrentWidget(sync_);
+    showTab(sync_);
     for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a) {
         sync_->setAlgorithm((SyncAlgo)a);
         int n = (int)syncScenarios((SyncAlgo)a).size();
@@ -637,7 +729,7 @@ int MainWindow::runSelfTest() {
     shot(this, "sync_posix_demo");
 
     // ---- Phase 2, M1: Disk scheduling
-    tabs_->setCurrentWidget(disk_);
+    showTab(disk_);
     stCheck(loadSample(sd + "/disk_reference.txt"), "load disk_reference.txt");
     {
         const int expect[6] = {640, 236, 331, 382, 299, 322};
@@ -668,7 +760,7 @@ int MainWindow::runSelfTest() {
     shot(this, "disk_reference");
 
     // ---- Phase 2, M2: Process management
-    tabs_->setCurrentWidget(proc_);
+    showTab(proc_);
     stCheck(loadSample(sd + "/lifecycle_reference.csv"), "load lifecycle_reference.csv");
     {
         std::vector<QString> seq;
@@ -710,7 +802,7 @@ int MainWindow::runSelfTest() {
     }
 
     // ---- Phase 2, M5: I/O management
-    tabs_->setCurrentWidget(io_);
+    showTab(io_);
     stCheck(io_->loadPreset(5), "io: hand-traced preset");
     {
         auto seq = [](const IoResult& r) {
@@ -742,7 +834,7 @@ int MainWindow::runSelfTest() {
     shot(this, "io_bulk_dma");
 
     // ---- Phase 2, M4: Advanced memory
-    tabs_->setCurrentWidget(memArea_);
+    showTab(memArea_);
     memArea_->setCurrentIndex(1);
     stCheck(memArea_->loadAllocPreset(0) && memArea_->allocResults().size() == 3, "memory: allocation preset");
     {
@@ -781,7 +873,7 @@ int MainWindow::runSelfTest() {
     stCheck(mem_->isVisible(), "memory: page-replacement sub-tab still available");
 
     // ---- Phase 2, M3: IPC
-    tabs_->setCurrentWidget(ipc_);
+    showTab(ipc_);
     stCheck(ipc_->loadPreset(0) && ipc_->sim()->trace().size() == 9, "ipc: shared-memory preset loaded (8 operations)");
     {
         std::string read;
@@ -824,7 +916,7 @@ int MainWindow::runSelfTest() {
     }
 
     // ---- Phase 2, M6: Multithreading
-    tabs_->setCurrentWidget(threads_);
+    showTab(threads_);
     {
         const int expect[3] = {12, 4, 6};
         for (int p = 0; p < 3; ++p)
@@ -858,23 +950,23 @@ int MainWindow::runSelfTest() {
     // Phase 2 tabs in the dark theme and at the minimum window size (screenshots for inspection)
     io_->loadPreset(0);
     io_->playback()->setPosition(4);
-    tabs_->setCurrentWidget(io_);
+    showTab(io_);
     shot(this, "dark_io");
-    tabs_->setCurrentWidget(proc_);
+    showTab(proc_);
     proc_->loadPreset(0);
     proc_->playback()->setPosition(8);
     shot(this, "dark_process");
-    tabs_->setCurrentWidget(memArea_);
+    showTab(memArea_);
     memArea_->setCurrentIndex(2);
     shot(this, "dark_paging");
     setDarkTheme(false);
     resize(1100, 700);
     for (QWidget* t : std::initializer_list<QWidget*>{disk_, proc_, io_, ipc_, threads_}) {
-        tabs_->setCurrentWidget(t);
+        showTab(t);
         shot(this, QString("small_%1").arg(tabs_->tabText(tabs_->currentIndex()).remove('/')));
     }
     memArea_->setCurrentIndex(1);
-    tabs_->setCurrentWidget(memArea_);
+    showTab(memArea_);
     shot(this, "small_memory_allocation");
     resize(1280, 800);
     stCheck(!ui::darkTheme() && !darkAction_->isChecked(), "switch back to light theme");

@@ -12,6 +12,8 @@
 #include <QRandomGenerator>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QFormLayout>
+#include "PanelLayout.h"
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -37,18 +39,16 @@ MemoryTab::MemoryTab(QWidget* parent) : QWidget(parent) {
     auto* randBtn = new QPushButton("Random string");
     auto* stdBtn = new QPushButton("Standard example");
     auto* belBtn = new QPushButton("Belady example");
-    auto* g = new QGridLayout(inBox);
+    auto* g = new QFormLayout(inBox);                 // vertical form: fits a narrow side panel
     g->setSpacing(8);
-    g->addWidget(new QLabel("Reference string:"), 0, 0);
-    g->addWidget(refEdit_, 0, 1, 1, 5);
-    g->addWidget(new QLabel("Frames:"), 1, 0);
-    g->addWidget(framesSpin_, 1, 1);
-    g->addWidget(new QLabel("Algorithm:"), 1, 2);
-    g->addWidget(modeCombo_, 1, 3);
-    g->addWidget(runBtn, 1, 4);
-    auto* exRow = new QHBoxLayout;
-    exRow->addWidget(randBtn); exRow->addWidget(stdBtn); exRow->addWidget(belBtn);
-    g->addLayout(exRow, 1, 5);
+    g->addRow(new QLabel("Reference string:"));
+    g->addRow(refEdit_);
+    g->addRow("Frames:", framesSpin_);
+    g->addRow("Algorithm:", modeCombo_);
+    g->addRow(runBtn);
+    auto* exRow = new QGridLayout;
+    exRow->addWidget(randBtn, 0, 0); exRow->addWidget(stdBtn, 0, 1); exRow->addWidget(belBtn, 1, 0, 1, 2);
+    g->addRow(exRow);
 
     // ---- outputs: frame tables (one tab per algorithm), summaries, chart ----
     tables_ = new QTabWidget;
@@ -57,7 +57,6 @@ MemoryTab::MemoryTab(QWidget* parent) : QWidget(parent) {
     beladyLabel_ = new QLabel;
     beladyLabel_->setWordWrap(true);
     chart_ = new BarChartWidget;
-    chart_->setMinimumWidth(260);
     auto* outLeft = new QWidget;
     auto* ol = new QVBoxLayout(outLeft);
     ol->setContentsMargins(0, 0, 0, 0);
@@ -91,18 +90,20 @@ MemoryTab::MemoryTab(QWidget* parent) : QWidget(parent) {
     pg->addWidget(new QLabel("Physical frames:"), 1, 0); pg->addWidget(physSpin_, 1, 1);
     pg->addWidget(allocLabel_, 2, 0, 1, 2);
     pg->addWidget(pageTable_, 3, 0, 1, 2);
-    ptBox->setMinimumWidth(240);
-    ptBox->setMaximumWidth(320);
 
-    auto* body = new QHBoxLayout;
-    body->setSpacing(8);
-    body->addWidget(outSplit, 1);
-    body->addWidget(ptBox);
+    auto* inW = new QWidget;
+    auto* il = new QVBoxLayout(inW);
+    il->setContentsMargins(0, 0, 0, 0);
+    il->addWidget(inBox);
+    il->addStretch();
+    auto* body = new PanelSplitter(Qt::Horizontal, "Memory/PageReplacement/h");
+    body->addPanel(new ConfigPanel(inW), PanelSplitter::Config, 1, 0.3);
+    body->addPanel(outSplit, PanelSplitter::Center);
+    body->addPanel(ConfigPanel::wrap(ptBox, "inspectorPanel"), PanelSplitter::Inspector, 1, 0.26);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(8);
-    lay->addWidget(inBox);
-    lay->addLayout(body, 1);
+    lay->addWidget(body, 1);
 
     connect(runBtn, &QPushButton::clicked, this, [this] { run(); });
     connect(refEdit_, &QLineEdit::returnPressed, this, [this] { run(); });

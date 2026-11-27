@@ -23,7 +23,7 @@ public:
     void setSim(const SyncSim* sim);
     void refresh(int animMs);
     QSize sizeHint() const override { return QSize(560, 360); }
-    QSize minimumSizeHint() const override { return QSize(380, 250); }
+    QSize minimumSizeHint() const override { return QSize(280, 180); }
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -52,7 +52,7 @@ public:
     explicit CodeView(QWidget* parent = nullptr);
     void setSim(const SyncSim* sim);
     QSize sizeHint() const override;
-    QSize minimumSizeHint() const override { return QSize(300, 160); }
+    QSize minimumSizeHint() const override { return QSize(200, 120); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

@@ -16,7 +16,7 @@ public:
     explicit ThreadMapView(QWidget* parent = nullptr);
     void setData(const ThreadResult* r, const std::vector<TSnap>* threads, const ThreadTick* tick, int animMs);
     QSize sizeHint() const override { return QSize(620, 380); }
-    QSize minimumSizeHint() const override { return QSize(420, 300); }
+    QSize minimumSizeHint() const override { return QSize(280, 180); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

@@ -4,6 +4,7 @@
 #include <QGroupBox>
 #include <QScrollArea>
 #include <QSplitter>
+#include "PanelLayout.h"
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -40,15 +41,28 @@ PlaybackBar::PlaybackBar(QWidget* parent) : QWidget(parent) {
     speed_->setAccessibleName("Playback speed");
     stepLabel_ = new QLabel;
     speedLabel_ = new QLabel;
-    auto* l = new QHBoxLayout(this);
-    l->setContentsMargins(0, 0, 0, 0);
-    l->setSpacing(6);
-    for (QPushButton* b : {run_, pause_, prev_, next_, stop_, reset_}) l->addWidget(b);
-    l->addWidget(scrub_, 1);
-    l->addWidget(stepLabel_);
-    l->addWidget(new QLabel("Speed:"));
-    l->addWidget(speed_);
-    l->addWidget(speedLabel_);
+    // Two groups: the buttons, and the scrubber with step / speed. They sit in one row when the
+    // bar is wide enough and in two rows otherwise (resizeEvent), so the bar never forces width.
+    buttons_ = new QWidget;
+    auto* bl = new QHBoxLayout(buttons_);
+    bl->setContentsMargins(0, 0, 0, 0);
+    bl->setSpacing(6);
+    for (QPushButton* b : {run_, pause_, prev_, next_, stop_, reset_}) bl->addWidget(b);
+    scrubRow_ = new QWidget;
+    auto* sl = new QHBoxLayout(scrubRow_);
+    sl->setContentsMargins(0, 0, 0, 0);
+    sl->setSpacing(6);
+    sl->addWidget(scrub_, 1);
+    sl->addWidget(stepLabel_);
+    sl->addWidget(new QLabel("Speed:"));
+    sl->addWidget(speed_);
+    sl->addWidget(speedLabel_);
+    scrub_->setMinimumWidth(80);
+    outer_ = new QBoxLayout(QBoxLayout::LeftToRight, this);
+    outer_->setContentsMargins(0, 0, 0, 0);
+    outer_->setSpacing(6);
+    outer_->addWidget(buttons_);
+    outer_->addWidget(scrubRow_, 1);
 
     connect(run_, &QPushButton::clicked, this, &PlaybackBar::run);
     connect(pause_, &QPushButton::clicked, this, &PlaybackBar::togglePause);
@@ -65,6 +79,18 @@ PlaybackBar::PlaybackBar(QWidget* parent) : QWidget(parent) {
     });
     timer_->setInterval(speed_->value());
     updateUi();
+}
+
+QSize PlaybackBar::minimumSizeHint() const {
+    QSize b = buttons_->minimumSizeHint(), s = scrubRow_->minimumSizeHint();
+    return QSize(std::max(b.width(), s.width()), b.height() + s.height() + 6);
+}
+
+void PlaybackBar::resizeEvent(QResizeEvent* e) {
+    QWidget::resizeEvent(e);
+    int needed = buttons_->sizeHint().width() + scrubRow_->minimumSizeHint().width() + 160;
+    auto dir = width() >= needed ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom;
+    if (outer_->direction() != dir) outer_->setDirection(dir);
 }
 
 void PlaybackBar::setLength(int steps) {
@@ -166,7 +192,7 @@ void PseudoCodeView::setCurrent(int line) {
 
 // ================================================================ ModuleHeader
 
-ModuleHeader::ModuleHeader(const QString& title, const QString& explanation, QWidget* parent) : QWidget(parent) {
+ModuleHeader::ModuleHeader(const QString& title, const QString& explanation, QWidget* parent) : QWidget(parent), title_(title) {
     auto* t = new QLabel("<b>" + title.toHtmlEscaped() + "</b>");
     QFont f = t->font();
     f.setPointSizeF(f.pointSizeF() * 1.25);
@@ -217,49 +243,33 @@ QWidget* titledBox(const QString& title, QWidget* content) {
 }
 
 void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* center,
-                    QWidget* inspector, PlaybackBar* bar, QWidget* bottom) {
+                    QWidget* inspector, PlaybackBar* bar, QWidget* bottom, const QString& layoutId) {
+    QString id = layoutId;
+    if (id.isEmpty()) {
+        if (auto* h = qobject_cast<ModuleHeader*>(header)) id = h->title();
+        else id = owner->metaObject()->className();
+    }
     auto* lay = new QVBoxLayout(owner);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(6);
     if (header) lay->addWidget(header);
-    auto* top = new QSplitter(Qt::Horizontal);
-    if (config) {
-        auto* sa = new QScrollArea;
-        sa->setWidget(config);
-        sa->setWidgetResizable(true);
-        sa->setFrameShape(QFrame::NoFrame);
-        sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        sa->setMinimumWidth(250);
-        sa->setMaximumWidth(340);
-        top->addWidget(sa);
-    }
-    if (center) top->addWidget(center);
-    if (inspector) top->addWidget(inspector);
-    top->setStretchFactor(config ? 1 : 0, 3);
-    if (inspector) top->setStretchFactor(top->count() - 1, 1);
-    QList<int> sizes;
-    if (config) sizes << 290;
-    if (center) sizes << 640;
-    if (inspector) sizes << 300;
-    top->setSizes(sizes);
+    auto* top = new PanelSplitter(Qt::Horizontal, id + "/h");
+    if (config) top->addPanel(new ConfigPanel(config), PanelSplitter::Config);
+    if (center) top->addPanel(center, PanelSplitter::Center);
+    if (inspector) top->addPanel(ConfigPanel::wrap(inspector, "inspectorPanel"), PanelSplitter::Inspector, 1, 0.28);
     if (!bottom) {                          // no bottom pages: the playback bar sits right below
         lay->addWidget(top, 1);
         if (bar) lay->addWidget(bar);
         return;
     }
-    auto* vsplit = new QSplitter(Qt::Vertical);
-    vsplit->addWidget(top);
-    if (bar || bottom) {
-        auto* low = new QWidget;
-        auto* ll = new QVBoxLayout(low);
-        ll->setContentsMargins(0, 0, 0, 0);
-        ll->setSpacing(4);
-        if (bar) ll->addWidget(bar);
-        if (bottom) ll->addWidget(bottom, 1);
-        vsplit->addWidget(low);
-        vsplit->setStretchFactor(0, 4);                // the visualization gets most of the height
-        vsplit->setStretchFactor(1, 2);
-        vsplit->setSizes({470, 190});
-    }
+    auto* vsplit = new PanelSplitter(Qt::Vertical, id + "/v");
+    vsplit->addPanel(top, PanelSplitter::Center, 3);
+    auto* low = new QWidget;
+    auto* ll = new QVBoxLayout(low);
+    ll->setContentsMargins(0, 0, 0, 0);
+    ll->setSpacing(4);
+    if (bar) ll->addWidget(bar);
+    ll->addWidget(bottom, 1);
+    vsplit->addPanel(ConfigPanel::wrap(low, "detailPanel"), PanelSplitter::Detail, 1);
     lay->addWidget(vsplit, 1);
 }

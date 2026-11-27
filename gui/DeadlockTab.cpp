@@ -13,6 +13,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSplitter>
+#include "PanelLayout.h"
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -126,24 +127,20 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     auto* ragBox = new QGroupBox("Resource-allocation graph");
     (new QVBoxLayout(ragBox))->addWidget(rag_);
 
-    auto* right = new QSplitter(Qt::Vertical);
-    right->addWidget(ragBox);
-    right->addWidget(resBox);
-    right->setStretchFactor(0, 3);
-    right->setStretchFactor(1, 2);
-    right->setSizes({330, 220});
+    auto* right = new PanelSplitter(Qt::Vertical, "Deadlock/v");
+    right->addPanel(ragBox, PanelSplitter::Center, 3);
+    right->addPanel(ConfigPanel::wrap(resBox, "detailPanel"), PanelSplitter::Detail, 2);
     auto* left = new QWidget;
     auto* ll = new QVBoxLayout(left);
     ll->setContentsMargins(0, 0, 0, 0);
     ll->setSpacing(8);
     ll->addLayout(top);
     ll->addWidget(matBox, 1);
-    auto* split = new QSplitter(Qt::Horizontal);
-    split->addWidget(left);
-    split->addWidget(right);
-    split->setStretchFactor(0, 1);
-    split->setStretchFactor(1, 1);
-    split->setSizes({640, 620});
+    // The matrices are the input of this module: a scrollable configuration panel that may take
+    // up to about half of the width by default.
+    auto* split = new PanelSplitter(Qt::Horizontal, "Deadlock/h");
+    split->addPanel(new ConfigPanel(left), PanelSplitter::Config, 1, 0.55);
+    split->addPanel(right, PanelSplitter::Center);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->addWidget(split);

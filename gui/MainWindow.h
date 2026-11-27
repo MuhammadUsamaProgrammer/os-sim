@@ -14,6 +14,10 @@ public:
     bool loadSample(const QString& path);
     // --selftest: exercises every tab and action without a display. Returns the exit code.
     int runSelfTest();
+    // Layout regression check: for every window size, every tab (and Memory sub-tab) is shown and
+    // all visible controls are audited (see LayoutAudit.h). Prints a report; returns the problems.
+    // OSSIM_SHOTS=<dir> also saves a screenshot per tab and size.
+    QStringList layoutReport(const QList<QSize>& sizes, bool print = true);
     // Writes <base>.txt and <base>.csv with every section. Returns false and sets *err on failure.
     bool writeReport(const QString& base, QString* err);
 
@@ -40,6 +44,8 @@ private:
     IpcTab* ipc_;
     ThreadsTab* threads_;
     void showMemoryTab();
+    void showTab(QWidget* page);
+    QWidget* pageOf(int i) const;
     QPlainTextEdit* log_;
     QAction* darkAction_ = nullptr;     // View > Dark theme (checkable)
     QToolButton* themeButton_ = nullptr; // switch button in the menu-bar corner

@@ -15,7 +15,7 @@ public:
     void setResult(const DiskResult* r);
     void setStep(int step, int animMs);        // step = number of moves applied
     QSize sizeHint() const override { return QSize(360, 340); }
-    QSize minimumSizeHint() const override { return QSize(220, 220); }
+    QSize minimumSizeHint() const override { return QSize(170, 160); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
@@ -32,7 +32,7 @@ public:
     void setResult(const DiskResult* r);
     void setStep(int step, int animMs);
     QSize sizeHint() const override { return QSize(460, 340); }
-    QSize minimumSizeHint() const override { return QSize(260, 220); }
+    QSize minimumSizeHint() const override { return QSize(200, 160); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

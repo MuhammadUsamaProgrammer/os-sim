@@ -16,6 +16,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include "PanelLayout.h"
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -179,16 +180,13 @@ SchedulingTab::SchedulingTab(QWidget* parent) : QWidget(parent) {
     cl->addWidget(cmpSplit);
     outTabs_->addTab(cmpWidget, "Comparison");
 
-    auto* rightSplit = new QSplitter(Qt::Vertical);
-    rightSplit->addWidget(ganttBox);
-    rightSplit->addWidget(outTabs_);
-    rightSplit->setStretchFactor(1, 2);
+    auto* rightSplit = new PanelSplitter(Qt::Vertical, "Scheduling/v");
+    rightSplit->addPanel(ganttBox, PanelSplitter::Center, 1);
+    rightSplit->addPanel(ConfigPanel::wrap(outTabs_, "detailPanel"), PanelSplitter::Detail, 2);
 
-    auto* main = new QSplitter(Qt::Horizontal);
-    main->addWidget(left);
-    main->addWidget(rightSplit);
-    main->setStretchFactor(1, 3);
-    main->setSizes({380, 720});
+    auto* main = new PanelSplitter(Qt::Horizontal, "Scheduling/h");
+    main->addPanel(new ConfigPanel(left), PanelSplitter::Config, 1, 0.42);
+    main->addPanel(rightSplit, PanelSplitter::Center);
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->addWidget(main);

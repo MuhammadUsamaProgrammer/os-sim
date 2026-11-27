@@ -18,7 +18,7 @@ public:
     void setSnapshot(const LcSnapshot* cur, const LcSnapshot* prev, int animMs);
     void setTwoState(bool on);
     QSize sizeHint() const override { return QSize(640, 420); }
-    QSize minimumSizeHint() const override { return QSize(420, 320); }
+    QSize minimumSizeHint() const override { return QSize(260, 180); }
 protected:
     void paintEvent(QPaintEvent*) override;
     void resizeEvent(QResizeEvent*) override;
