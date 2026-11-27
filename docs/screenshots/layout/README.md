@@ -2,7 +2,7 @@
 
 - `before_1366x768_Processes.png`, `before_1366x768_IPC.png`: the old layout. The configuration panel is capped
   at 340 px with no horizontal scroll bar, so its fields, table and buttons are cut off. The originals reported by
-  the user are in `left_panal_issue_pictures/` in the project root.
+  the user were attached to the issue report (they are not stored in the repository).
 - `layout_1366x768_<module>.png`, `layout_1920x1080_<module>.png`: every module and Memory sub-tab after the fix.
 
 Regenerate them with:
