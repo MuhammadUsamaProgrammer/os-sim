@@ -187,6 +187,55 @@ Ubuntu VM, 2 cores, ~6 GB RAM. g++ 15.2, CMake 4.2.3, Qt 6.10.2 (Widgets + Chart
   (I/O polling useful ticks = 2, allocation candidates for 212 = 3); no model code was bent to fit a test.
 - Live demo cleanup checked manually: no System V segments/queues or /tmp/ossim-fifo-* left after the runs.
 
+## Responsive layout fix (global UI)
+- Problem: in most modules the left configuration panel was clipped at its right edge (fields, tables, buttons
+  unreachable) and could not be dragged wider; on smaller or scaled screens the window was wider than the screen.
+- Root causes (measured with the new audit, before the fix: 106 inaccessible controls at 1366x768, window could not
+  shrink to 1024x768, minimum about 1106x888):
+  1. `assembleModule()` (all Phase 2 tabs) and the Synchronization tab put the configuration panel in a QScrollArea
+     with a MAXIMUM width (340 / 380 px) and the horizontal scroll bar switched OFF, while the content needed 600-900 px
+     (long combo items, non-wrapping labels, tables, button rows): the overflow was clipped and the splitter stopped at
+     the maximum width.
+  2. A hard `setMinimumSize(1100, 700)`, large fixed minimum sizes of the views (420-440 px), the one-row playback bar
+     (768 px) and wide input rows (Deadlock grid, Memory input bar) made the window minimum larger than small / scaled
+     screens. Inspector and bottom areas added their full minimum heights (QSplitter sums minimums, even of collapsible
+     children).
+  3. QScrollArea::widgetResizable sizes content by its preferred height-for-width (wrapped labels), so pages scrolled
+     although they would have fitted.
+- Shared solution (`gui/PanelLayout.*`), used by all nine modules:
+  - `ConfigPanel` / `FitScrollArea`: no width cap; content gets the viewport size and grows beyond it only when its
+    real minimum (height for the current width) does not fit; scroll bars "as needed" in both directions.
+  - `ui::makeResponsive`: QFormLayout rows wrap, fields grow, long labels wrap, combo boxes use a minimum content
+    length with a full-width pop-up and a tooltip.
+  - `PanelSplitter`: panel roles (configuration / view / inspector / detail), content-based default sizes capped by
+    a share of the window, view never collapsible, side panels collapsible, visible handles with hover highlight,
+    double-click = default layout, show / hide / focus view, sizes saved in QSettings and validated on restore.
+  - `PageScroll`: every top-level tab page scrolls when the window is smaller than the page minimum (last-resort
+    fallback; no page scrolls at 1024x768 or larger).
+  - `PlaybackBar` wraps into two rows when narrow; view minimum sizes reduced (the painters already scale);
+    `MainWindow` has no fixed minimum size and starts at 90% of the available screen; the event log starts small.
+  - Scheduling, Deadlock, Synchronization and Memory > Page replacement were moved onto the same components
+    (Memory > Page replacement: inputs are now a left panel, the page table an inspector).
+  - View menu: Reset Panel Layout (Ctrl+Shift+R), Show Configuration Panel (Ctrl+Shift+C), Show Inspector Panel
+    (Ctrl+Shift+I), Focus Simulation View (Ctrl+Shift+F), Event log.
+- Verification:
+  - `--layout-report WxH,...` (gui/LayoutAudit.*) shows every tab and Memory sub-tab and checks the real geometry of
+    every visible control against all its clipping ancestors (reachable = inside, or reachable with an enabled
+    scroll bar).
+  - 0 problems at 1024x768, 1280x720, 1366x768, 1440x900, 1920x1080, 2560x1440 (100%); 1366x768 and 1920x1080 at
+    125%; 1366x768 and 1920x1080 at 150%; 1920x1080 and 2560x1440 at 200% (QT_SCALE_FACTOR, logical size minus
+    40 px for title bar / panel); font DPI 120 and 144; dark theme.
+  - `--selftest` now has 90 layout checks (301 PASS in total): splitter handles dragged with real mouse events in both
+    directions on 12 pages (configuration panel widens by 320 px, view shrinks, panel narrows again with every control
+    still reachable, inspector resizes both ways, Reset Panel Layout restores the defaults), View menu hide / show /
+    focus, 31 preset / algorithm / mode switches, dark theme, saved sizes restored, invalid saved sizes rejected.
+  - The new tests found one more real clipping bug (Synchronization process cards capped at 250 px cut off their
+    Step button) - fixed.
+  - Screenshots: `docs/screenshots/layout/` (before / after, every module at 1366x768 and 1920x1080).
+- Limitations: checked with offscreen renders, not on a physical monitor; at the smallest scaled sizes (for example
+  1366x768 at 150%) whole pages scroll vertically by up to ~130 px; very narrow views draw smaller diagrams (some
+  arrow labels overlap but nothing is clipped).
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.

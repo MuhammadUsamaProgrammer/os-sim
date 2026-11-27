@@ -459,6 +459,13 @@ owned IPC objects removed). Tests: `test_disk`, `test_procmgmt`, `test_io`, `tes
 `test_threads`, `test_native`. Rules: views only display model snapshots; playback speed never changes results;
 input changes rebuild the trace; a manual command after Prev starts a new branch; never block the GUI thread.
 
+## 13. GUI layout rules (responsive panels)
+
+Build module layouts with `gui/PanelLayout.h`: configuration in `ConfigPanel`, splitters as `PanelSplitter` with
+roles, inspectors / bottom areas via `ConfigPanel::wrap(...)`; never set a maximum width on a configuration panel,
+never switch a scroll bar to AlwaysOff where content could overflow, keep view `minimumSizeHint()` small (the painters
+scale), and run `./gui/ossim --layout-report 1366x768,1024x768` plus `--selftest` (layout section) after GUI changes.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.

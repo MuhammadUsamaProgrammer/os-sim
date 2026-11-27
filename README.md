@@ -173,6 +173,14 @@ os-sim/
    **Recover** terminates victims one by one and redraws.
 5. **Use Scheduling tab pids** labels the rows with the Scheduling tab's processes.
 
+### Panels and window size
+Every module has the same resizable layout: configuration panel (left), visualization (centre), inspector (right)
+and, where present, a bottom area. Drag the splitter handles to resize; double-click a handle to restore the
+defaults. Panels scroll when their content does not fit, so nothing is ever cut off, and the whole page scrolls if the
+window is very small. The **View** menu has Reset Panel Layout (Ctrl+Shift+R), Show Configuration Panel
+(Ctrl+Shift+C), Show Inspector Panel (Ctrl+Shift+I), Focus Simulation View (Ctrl+Shift+F) and the event log. Panel
+sizes are remembered between runs. Layout check: `QT_QPA_PLATFORM=offscreen ./gui/ossim --layout-report 1366x768,1920x1080`.
+
 ### Phase 2 tabs (Processes, Threads, IPC, I/O, Disk, Memory sub-tabs)
 Each tab has the same layout: configuration and presets on the left, the visualization in the middle, an inspector
 on the right, the playback bar and pages (log, timeline, comparison, Live Linux demo) at the bottom. Choose a preset,

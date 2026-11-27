@@ -163,6 +163,12 @@ void PanelHandle::mouseDoubleClickEvent(QMouseEvent*) {
 
 // ================================================================ PanelSplitter
 
+static int g_persist = -1;                 // -1 = default (on, except in self-test mode)
+static QString g_settingsName = "OS-Sim";
+void PanelSplitter::setPersistence(bool enabled, const QString& name) { g_persist = enabled ? 1 : 0; g_settingsName = name; }
+bool PanelSplitter::persistence() { return g_persist < 0 ? !ui::selfTestMode() : g_persist == 1; }
+static QSettings layoutSettings() { return QSettings(g_settingsName, "OS-Sim"); }
+
 PanelSplitter::PanelSplitter(Qt::Orientation o, const QString& id, QWidget* parent) : QSplitter(o, parent), id_(id) {
     setObjectName("panelSplitter:" + id);
     setHandleWidth(std::max(7, fontMetrics().height() / 2));
@@ -237,21 +243,21 @@ QList<int> PanelSplitter::defaultSizes() const {
 void PanelSplitter::resetLayout() {
     if (focus_) setFocusView(false);
     for (int i = 0; i < count(); ++i) widget(i)->setVisible(true);
-    if (!id_.isEmpty() && !ui::selfTestMode()) QSettings("OS-Sim", "OS-Sim").remove("layout/" + id_);
+    if (!id_.isEmpty() && persistence()) layoutSettings().remove("layout/" + id_);
     setSizes(defaultSizes());
 }
 
 void PanelSplitter::save() {
-    if (id_.isEmpty() || ui::selfTestMode()) return;
+    if (id_.isEmpty() || !persistence()) return;
     QVariantList v;
     for (int x : sizes()) v << x;
-    QSettings("OS-Sim", "OS-Sim").setValue("layout/" + id_, v);
+    layoutSettings().setValue("layout/" + id_, v);
 }
 
 // Restores saved sizes only when they still make sense for the current window.
 bool PanelSplitter::restore() {
-    if (id_.isEmpty() || ui::selfTestMode()) return false;
-    QVariantList v = QSettings("OS-Sim", "OS-Sim").value("layout/" + id_).toList();
+    if (id_.isEmpty() || !persistence()) return false;
+    QVariantList v = layoutSettings().value("layout/" + id_).toList();
     if (v.size() != count()) return false;
     const bool horiz = orientation() == Qt::Horizontal;
     int total = horiz ? width() : height();

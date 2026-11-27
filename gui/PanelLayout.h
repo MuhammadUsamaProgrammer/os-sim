@@ -80,6 +80,11 @@ public:
     bool focusView() const { return focus_; }
     QList<int> defaultSizes() const;
     QWidget* panel(Role r) const;
+    // Persistence switch: off during the self-test unless a test enables it with its own
+    // settings name (so the user's saved layout is never touched).
+    static void setPersistence(bool enabled, const QString& settingsName = "OS-Sim");
+    static bool persistence();
+    void saveNow() { save(); }
 protected:
     QSplitterHandle* createHandle() override;
     void showEvent(QShowEvent* e) override;

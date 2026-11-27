@@ -15,6 +15,8 @@
 #include <QPlainTextEdit>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QSplitterHandle>
+#include <QMouseEvent>
 #include <QScrollBar>
 #include <QSettings>
 #include <QToolButton>
@@ -79,6 +81,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     log_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     log_->setMaximumBlockCount(20000);
     auto* dock = new QDockWidget("Event log", this);
+    logDock_ = dock;
     dock->setObjectName("logDock");
     dock->setWidget(log_);
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
@@ -129,6 +132,62 @@ MainWindow::~MainWindow() {
     for (QObject* o : kids) o->disconnect(this);
 }
 
+// Visible PanelSplitters of the page that is shown now (hidden sub-tab pages are skipped).
+QList<PanelSplitter*> MainWindow::currentSplitters() const {
+    QList<PanelSplitter*> v;
+    for (PanelSplitter* s : ui::panelSplitters(tabs_->currentWidget()))
+        if (s->isVisibleTo(tabs_->currentWidget()) && (!s->parentWidget() || s->parentWidget()->isVisibleTo(tabs_->currentWidget()))) v << s;
+    return v;
+}
+
+void MainWindow::resetPanelLayout() {
+    setFocusView(false);
+    for (PanelSplitter* s : currentSplitters()) s->resetLayout();
+    syncViewActions();
+    statusBar()->showMessage("Panel layout restored to the defaults", 3000);
+}
+
+void MainWindow::setConfigPanelsVisible(bool on) {
+    for (PanelSplitter* s : currentSplitters()) if (s->hasPanel(PanelSplitter::Config)) s->setPanelVisible(PanelSplitter::Config, on);
+    syncViewActions();
+}
+
+void MainWindow::setInspectorPanelsVisible(bool on) {
+    for (PanelSplitter* s : currentSplitters()) if (s->hasPanel(PanelSplitter::Inspector)) s->setPanelVisible(PanelSplitter::Inspector, on);
+    syncViewActions();
+}
+
+// Focus mode: only the visualization remains; the previous layout comes back when it ends.
+void MainWindow::setFocusView(bool on) {
+    if (on == focusView()) { if (focusAction_) focusAction_->setChecked(on); return; }
+    if (on) {
+        focused_ = currentSplitters();
+        for (PanelSplitter* s : focused_) s->setFocusView(true);
+        logWasVisible_ = logDock_->isVisible();
+        logDock_->hide();
+    } else {
+        for (PanelSplitter* s : focused_) s->setFocusView(false);
+        focused_.clear();
+        if (logWasVisible_) logDock_->show();
+    }
+    if (focusAction_) focusAction_->setChecked(on);
+}
+
+// Check marks / enabled state of the View menu follow the current tab.
+void MainWindow::syncViewActions() {
+    if (!configAction_) return;
+    bool hasC = false, visC = false, hasI = false, visI = false;
+    for (PanelSplitter* s : currentSplitters()) {
+        if (s->hasPanel(PanelSplitter::Config)) { hasC = true; visC = visC || s->panelVisible(PanelSplitter::Config); }
+        if (s->hasPanel(PanelSplitter::Inspector)) { hasI = true; visI = visI || s->panelVisible(PanelSplitter::Inspector); }
+    }
+    configAction_->setEnabled(hasC && !focusView());
+    configAction_->setChecked(visC);
+    inspectorAction_->setEnabled(hasI && !focusView());
+    inspectorAction_->setChecked(visI);
+    focusAction_->setChecked(focusView());
+}
+
 // Shows the top-level tab whose page is `page` (pages sit inside a PageScroll container).
 void MainWindow::showTab(QWidget* page) {
     for (int i = 0; i < tabs_->count(); ++i)
@@ -163,6 +222,27 @@ void MainWindow::buildMenus() {
     darkAction_->setCheckable(true);
     darkAction_->setShortcut(QKeySequence("Ctrl+T"));
     connect(darkAction_, &QAction::toggled, this, &MainWindow::setDarkTheme);
+    view->addSeparator();
+    // Panel layout of the current tab (shared PanelSplitter, see PanelLayout.h)
+    QAction* reset = view->addAction("Reset Panel Layout", QKeySequence("Ctrl+Shift+R"), this, &MainWindow::resetPanelLayout);
+    reset->setToolTip("Restore the default panel sizes of this tab (also: double-click a splitter handle)");
+    configAction_ = view->addAction("Show Configuration Panel");
+    configAction_->setCheckable(true);
+    configAction_->setShortcut(QKeySequence("Ctrl+Shift+C"));
+    connect(configAction_, &QAction::triggered, this, &MainWindow::setConfigPanelsVisible);
+    inspectorAction_ = view->addAction("Show Inspector Panel");
+    inspectorAction_->setCheckable(true);
+    inspectorAction_->setShortcut(QKeySequence("Ctrl+Shift+I"));
+    connect(inspectorAction_, &QAction::triggered, this, &MainWindow::setInspectorPanelsVisible);
+    focusAction_ = view->addAction("Focus Simulation View");
+    focusAction_->setCheckable(true);
+    focusAction_->setShortcut(QKeySequence("Ctrl+Shift+F"));
+    focusAction_->setToolTip("Hide the side panels, the bottom area and the event log; toggle again to restore");
+    connect(focusAction_, &QAction::triggered, this, &MainWindow::setFocusView);
+    view->addAction(logDock_->toggleViewAction());
+    connect(view, &QMenu::aboutToShow, this, &MainWindow::syncViewActions);
+    connect(tabs_, &QTabWidget::currentChanged, this, [this] { setFocusView(false); syncViewActions(); });
+    connect(memArea_, &QTabWidget::currentChanged, this, [this] { setFocusView(false); syncViewActions(); });
 
     // Light/dark switch button in the top-right corner of the menu bar.
     themeButton_ = new QToolButton(this);
@@ -937,6 +1017,155 @@ int MainWindow::runSelfTest() {
         bool ok = threads_->startDemo(4, 10) && waitFor([&] { return !threads_->demoRunning(); }, 10000);
         stCheck(ok && threads_->demoExitCode() == 0 && threads_->demoCorrectResults() == 4, "threads live demo: 4 pthreads joined, results correct");
         shot(this, "threads_live_demo");
+    }
+
+    // ---- Responsive layout regression (real geometry; see LayoutAudit.h and PanelLayout.h)
+    {
+        QStringList lp = layoutReport({QSize(1920, 1080), QSize(1366, 768), QSize(1024, 768), QSize(910, 480)}, false);
+        stCheck(lp.isEmpty(), QString("layout: every control of all 9 modules (and Memory sub-tabs) reachable at 1920x1080, 1366x768, "
+                                      "1024x768, 910x480 - %1 problem(s)%2").arg(lp.size()).arg(lp.isEmpty() ? QString() : ": " + lp.first()));
+        resize(1366, 768);
+        QApplication::processEvents();
+        // Drags a splitter handle like a user would (press, move by dx/dy, release).
+        auto drag = [](QSplitterHandle* h, int d) {
+            bool horiz = h->orientation() == Qt::Horizontal;
+            QPoint c = h->rect().center(), c2 = c + (horiz ? QPoint(d, 0) : QPoint(0, d));
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(c), QPointF(h->mapToGlobal(c)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(h, &press);
+            QMouseEvent move(QEvent::MouseMove, QPointF(c2), QPointF(h->mapToGlobal(c2)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(h, &move);
+            QMouseEvent rel(QEvent::MouseButtonRelease, QPointF(c2), QPointF(h->mapToGlobal(c2)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(h, &rel);
+            QApplication::processEvents();
+            QApplication::processEvents();
+        };
+        auto horizontalWithConfig = [this]() -> PanelSplitter* {
+            for (PanelSplitter* sp : currentSplitters())
+                if (sp->orientation() == Qt::Horizontal && sp->hasPanel(PanelSplitter::Config)) return sp;
+            return nullptr;
+        };
+        struct T { QWidget* page; int sub; const char* name; };
+        std::vector<T> pages = {{sched_, -1, "Scheduling"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
+                                {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
+                                {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
+                                {io_, -1, "I/O"}, {disk_, -1, "Disk"}};
+        for (const T& t : pages) {
+            showTab(t.page);
+            if (t.sub >= 0) memArea_->setCurrentIndex(t.sub);
+            QApplication::processEvents();
+            PanelSplitter* sp = horizontalWithConfig();
+            if (!sp) { stCheck(false, QString("layout %1: has a configuration panel splitter").arg(t.name)); continue; }
+            auto* cfg = qobject_cast<QScrollArea*>(sp->panel(PanelSplitter::Config));
+            QWidget* center = sp->panel(PanelSplitter::Center);
+            int cfgIdx = sp->indexOf(cfg);
+            int minViewport = cfg->fontMetrics().averageCharWidth() * 18;
+            stCheck(cfg->viewport()->width() >= minViewport, QString("layout %1: configuration viewport %2 px usable").arg(t.name).arg(cfg->viewport()->width()));
+            int w0 = cfg->width(), c0 = center->width();
+            drag(sp->handle(cfgIdx + 1), 320);                                  // widen the configuration panel
+            int w1 = cfg->width(), c1 = center->width();
+            stCheck(w1 >= w0 + 200 && c1 < c0, QString("layout %1: dragging widens the configuration panel (%2 -> %3 px) and the view shrinks (%4 -> %5)")
+                                                   .arg(t.name).arg(w0).arg(w1).arg(c0).arg(c1));
+            stCheck(cfg->horizontalScrollBar()->maximum() == 0 || cfg->width() >= cfg->widget()->minimumSizeHint().width(),
+                    QString("layout %1: widened panel shows its content without horizontal scrolling").arg(t.name));
+            drag(sp->handle(cfgIdx + 1), -420);                                 // and narrower again
+            int w2 = cfg->width();
+            stCheck(w2 < w1 - 150, QString("layout %1: dragging back narrows it (%2 -> %3 px)").arg(t.name).arg(w1).arg(w2));
+            LayoutAuditResult narrow = auditControls(tabs_->currentWidget(), t.name);
+            stCheck(narrow.problems.isEmpty(), QString("layout %1: narrow configuration panel - every control still reachable (scroll bars)%2")
+                                                   .arg(t.name).arg(narrow.problems.isEmpty() ? QString() : ": " + narrow.problems.first()));
+            if (QWidget* ins = sp->panel(PanelSplitter::Inspector)) {
+                int insIdx = sp->indexOf(ins), i0 = ins->width();
+                drag(sp->handle(insIdx), -200);                                 // widen the inspector
+                int i1 = ins->width();
+                drag(sp->handle(insIdx), 260);                                  // narrow it
+                int i2 = ins->width();
+                stCheck(i1 > i0 + 100 && i2 < i1 - 100, QString("layout %1: inspector resizes both ways (%2 -> %3 -> %4 px)").arg(t.name).arg(i0).arg(i1).arg(i2));
+            }
+            resetPanelLayout();
+            QApplication::processEvents();
+            QList<int> now = sp->sizes(), def = sp->defaultSizes();
+            bool same = now.size() == def.size();
+            for (int i = 0; same && i < now.size(); ++i) same = std::abs(now[i] - def[i]) <= 4;
+            stCheck(same, QString("layout %1: Reset Panel Layout restores the default sizes").arg(t.name));
+        }
+        shot(this, "layout_after_drag_reset");
+        // View menu: show / hide panels and focus mode
+        showTab(proc_);
+        QApplication::processEvents();
+        PanelSplitter* sp = horizontalWithConfig();
+        int cw = sp ? sp->panel(PanelSplitter::Center)->width() : 0;
+        setConfigPanelsVisible(false);
+        setInspectorPanelsVisible(false);
+        QApplication::processEvents();
+        stCheck(sp && !sp->panelVisible(PanelSplitter::Config) && !sp->panelVisible(PanelSplitter::Inspector) &&
+                sp->panel(PanelSplitter::Center)->width() > cw, "layout: View > hide configuration and inspector panels gives the view more space");
+        setConfigPanelsVisible(true);
+        setInspectorPanelsVisible(true);
+        QApplication::processEvents();
+        stCheck(sp && sp->panelVisible(PanelSplitter::Config) && sp->panelVisible(PanelSplitter::Inspector), "layout: View > show panels again");
+        setFocusView(true);
+        QApplication::processEvents();
+        shot(this, "layout_focus_view");
+        stCheck(sp && !sp->panelVisible(PanelSplitter::Config) && !logDock_->isVisible() && focusView(), "layout: Focus Simulation View hides panels and the log");
+        setFocusView(false);
+        QApplication::processEvents();
+        stCheck(sp && sp->panelVisible(PanelSplitter::Config) && sp->panelVisible(PanelSplitter::Inspector) && logDock_->isVisible(),
+                "layout: leaving focus view restores the layout");
+        // Presets / algorithms / modes change the forms: layouts must stay accessible
+        bool presetsOk = true;
+        QString firstBad;
+        auto auditNow = [&](const QString& what) {
+            QApplication::processEvents();
+            LayoutAuditResult a = auditControls(tabs_->currentWidget(), what);
+            if (!a.problems.isEmpty()) { presetsOk = false; if (firstBad.isEmpty()) firstBad = a.problems.first(); }
+        };
+        for (int i = 0; i < 4; ++i) { proc_->loadPreset(i); auditNow(QString("Processes preset %1").arg(i)); }
+        proc_->setManual(true); auditNow("Processes manual"); proc_->setManual(false);
+        showTab(ipc_);
+        for (int i = 0; i < 8; ++i) { ipc_->loadPreset(i); auditNow(QString("IPC preset %1").arg(i)); }
+        showTab(io_);
+        for (int i = 0; i < 6; ++i) { io_->loadPreset(i); auditNow(QString("I/O preset %1").arg(i)); }
+        showTab(disk_);
+        for (int i = 0; i < 7; ++i) { disk_->loadPreset(i); auditNow(QString("Disk preset %1").arg(i)); }
+        showTab(threads_);
+        for (int i = 0; i < 6; ++i) { threads_->loadPreset(i); auditNow(QString("Threads preset %1").arg(i)); }
+        showTab(sync_);
+        for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a) { sync_->setAlgorithm((SyncAlgo)a); auditNow(QString("Sync algorithm %1").arg(a)); }
+        stCheck(presetsOk, "layout: switching presets / algorithms / modes keeps every control reachable" + (firstBad.isEmpty() ? QString() : ": " + firstBad));
+        // Dark theme and a window resized after start
+        setDarkTheme(true);
+        QStringList dk = layoutReport({QSize(1366, 768), QSize(1100, 650)}, false);
+        stCheck(dk.isEmpty(), QString("layout: dark theme, resized windows - %1 problem(s)").arg(dk.size()));
+        setDarkTheme(false);
+        // Saved panel sizes: restored when valid, ignored when they do not fit (own settings name)
+        PanelSplitter::setPersistence(true, "OS-Sim-selftest");
+        auto mkSplit = [] {
+            auto* p = new PanelSplitter(Qt::Horizontal, "selftest/persist");
+            for (auto r : {PanelSplitter::Config, PanelSplitter::Center, PanelSplitter::Inspector}) {
+                auto* w = new QWidget;
+                w->setMinimumSize(60, 40);
+                p->addPanel(w, r);
+            }
+            p->resize(900, 300);
+            p->show();
+            QApplication::processEvents();
+            return p;
+        };
+        PanelSplitter* a = mkSplit();
+        a->setSizes({250, 450, 186});
+        QList<int> saved = a->sizes();
+        a->saveNow();
+        delete a;
+        PanelSplitter* b = mkSplit();
+        stCheck(b->sizes() == saved, "layout: saved panel sizes are restored");
+        delete b;
+        QSettings("OS-Sim-selftest", "OS-Sim").setValue("layout/selftest/persist", QVariantList{10, 20, 20});
+        PanelSplitter* c = mkSplit();
+        stCheck(c->sizes() != QList<int>({10, 20, 20}) && c->sizes()[1] >= 60, "layout: saved sizes that do not fit the window are rejected");
+        delete c;
+        QSettings("OS-Sim-selftest", "OS-Sim").clear();
+        PanelSplitter::setPersistence(false);
+        resize(1280, 800);
     }
 
     // Export: both files, every section

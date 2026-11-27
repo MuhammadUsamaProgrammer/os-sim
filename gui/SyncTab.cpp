@@ -675,8 +675,9 @@ void SyncTab::rebuildCards() {
         Card c;
         c.frame = new QFrame;
         c.frame->setObjectName("syncCard");
-        c.frame->setMinimumWidth(190);
-        c.frame->setMaximumWidth(250);
+        // Width from the content (title, state badge, Step button); the card row scrolls horizontally,
+        // so a card never needs a cap that would clip its own button.
+        c.frame->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
         auto* v = new QVBoxLayout(c.frame);
         v->setContentsMargins(8, 4, 8, 4);
         v->setSpacing(2);
