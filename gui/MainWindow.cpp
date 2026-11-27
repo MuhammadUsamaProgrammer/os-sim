@@ -42,6 +42,7 @@
 #include "HeapLab.h"
 #include "SysMonTab.h"
 #include "JobControlTab.h"
+#include "RtSchedTab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -68,7 +69,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     io_ = new IoTab;
     ipc_ = new IpcTab;
     threads_ = new ThreadsTab;
-    tabs_->addTab(new PageScroll(sched_), "Scheduling");
+    schedArea_ = new QTabWidget;                  // Scheduling: the original page + Phase 3 child views
+    schedArea_->addTab(sched_, "CPU Scheduling");
+    rt_ = new RtSchedPage;
+    schedArea_->addTab(rt_, "Real-Time Scheduling");
+    tabs_->addTab(new PageScroll(schedArea_), "Scheduling");
     memArea_ = new MemAdvArea(mem_);              // page replacement + Phase 2 memory sub-tabs
     tabs_->addTab(new PageScroll(memArea_), "Memory");
     tabs_->addTab(new PageScroll(dead_), "Deadlock");
@@ -115,6 +120,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(storage_, &StorageArea::logMessage, this, &MainWindow::appendLog);
     connect(sysmon_, &SystemMonitorPage::logMessage, this, &MainWindow::appendLog);
     connect(jobs_, &JobControlPage::logMessage, this, &MainWindow::appendLog);
+    connect(rt_, &RtSchedPage::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -484,6 +490,7 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     T << "\n=== Threading models ===\n" << threads_->reportText();
     C << "\n" << threads_->csvSection();
     // 14. Storage and files
+    T << "\n=== Real-time scheduling ===\n" << rt_->reportText();
     T << "\n=== Job control (simulated shell) ===\n" << jobs_->reportText();
     T << "\n=== Storage and files (virtual disk) ===\n" << storage_->reportText();
     C << "\n" << storage_->csvSection();
@@ -1043,6 +1050,34 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3: Scheduling > Real-Time Scheduling (RM / EDF)
+    {
+        RtSchedPage* rp = rt_;
+        showTab(rp);
+        stCheck(rp->loadPreset(0) && rp->result() && rp->compareRm()->misses > 0 && rp->compareRm()->firstMiss == 7 && rp->compareEdf()->misses == 0,
+                "real-time: A(2,5) B(4,7) - RM misses at t=7, EDF meets every deadline over 35");
+        stCheck(std::fabs(rp->result()->utilization - 34.0 / 35.0) < 1e-9, "real-time: utilization 34/35");
+        rp->setAlgorithm(RtAlgo::EDF);
+        stCheck(rp->result() && rp->result()->cfg.algo == RtAlgo::EDF && rp->result()->misses == 0, "real-time: switching to EDF rebuilds the trace");
+        bool all = true;
+        for (int i = 0; i < (int)rtPresets().size(); ++i) all = rp->loadPreset(i) && all;
+        stCheck(all, "real-time: all presets (feasible, overload, fictional mission, constrained deadlines) run");
+        rp->loadPreset(2);
+        rp->setPolicy(MissPolicy::Abort);
+        int dropped = 0;
+        for (const RtTaskStats& s : rp->result()->stats) dropped += s.dropped;
+        stCheck(rp->result()->misses > 0 && dropped == rp->result()->misses, "real-time: overload with the abort policy - every miss aborted, counted once");
+        rp->setPolicy(MissPolicy::Continue);
+        int w0 = ui::warningCount();
+        const std::vector<RtTask> badTasks = {RtTask{"bad", 5, 4, 4, 0}};
+        stCheck(!rp->setTasks(badTasks, 20) && !rp->result() && ui::warningCount() == w0, "real-time: invalid task set (C > D) rejected with a message");
+        rp->loadPreset(0);
+        rp->setAlgorithm(RtAlgo::RM);
+        rp->playback()->setPosition(8);
+        shot(this, "realtime_rm");
+        rp->loadPreset(3);
+    }
+
     // ---- Phase 3: Processes > Job Control (deterministic shell model + Live Linux process groups)
     {
         JobControlPage* jc = jobs_;
@@ -1253,7 +1288,7 @@ int MainWindow::runSelfTest() {
             return nullptr;
         };
         struct T { QWidget* page; int sub; const char* name; };
-        std::vector<T> pages = {{sched_, -1, "Scheduling"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
+        std::vector<T> pages = {{sched_, -1, "Scheduling"}, {rt_, -1, "Scheduling > Real-Time"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
                                 {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
                                 {io_, -1, "I/O"}, {disk_, -1, "Disk"},

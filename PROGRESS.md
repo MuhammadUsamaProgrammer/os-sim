@@ -306,6 +306,20 @@ Done together because the Recovery Lab works on the same model (dependency, not 
   children, waitpid WUNTRACED/WCONTINUED, 2-stage pipe pipeline, everything reaped; no tcsetpgrp / PTY).
 - Tests: `test_jobctl` (98 checks), `test_native` (jobs demo); self-test: 10 job-control checks.
 
+### Stage 6: Scheduling > Real-Time Scheduling (done)
+- `core/rtsched.*` (pure): preemptive RM and EDF on one CPU, periodic tasks (C, T, D, offset; C <= D <= T required),
+  documented event order (completion -> deadline check -> release -> dispatch), completion at the deadline = on time,
+  deterministic ties, miss policy continue / abort (counted once), horizon semantics (deadlines at H checked, later
+  deadlines = incomplete), per-task statistics, utilization analysis with stated assumptions (RM bound sufficient
+  only, EDF U <= 1 for implicit deadlines; constrained deadlines -> tests not applicable).
+- Presets: A(2,5)/B(4,7) H=35 (RM misses at t=7, EDF none), feasible, overload, FICTIONAL mission-control workload
+  (labelled illustrative), constrained deadlines. Priority inversion is NOT added: the synchronization model has no
+  priority-based scheduler to reuse accurately (documented).
+- GUI: Scheduling became a sub-tab area (CPU Scheduling = the existing page, Real-Time Scheduling); Gantt with CPU and
+  task lanes, release/deadline/miss markers, playback cursor, ready queue in priority order, analysis, statistics,
+  event log, RM-vs-EDF comparison on identical input.
+- Tests: `test_rtsched` (79 checks); self-test: 6 checks.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
