@@ -15,7 +15,9 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     EngineBridge.h EngineBridge.cpp
     SyncTab.h SyncTab.cpp
     SyncViews.h SyncViews.cpp
-    SyncBridge.h SyncBridge.cpp)
+    SyncBridge.h SyncBridge.cpp
+    ModuleKit.h ModuleKit.cpp
+    DiskTab.h DiskTab.cpp DiskViews.h DiskViews.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 else()

@@ -1,0 +1,6 @@
+# Disk scheduling edge cases: request at the head (53), duplicates (65 twice),
+# both boundaries (0 and 199), direction lower.
+range 0 199
+head 53
+direction lower
+requests 53 65 0 199 65 120

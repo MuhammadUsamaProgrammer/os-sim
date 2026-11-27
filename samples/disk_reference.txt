@@ -1,0 +1,6 @@
+# Disk scheduling reference workload (Silberschatz / Phase 2 specification)
+# Expected total head movement: FCFS 640, SSTF 236, SCAN 331, C-SCAN 382, LOOK 299, C-LOOK 322
+range 0 199
+head 53
+direction higher
+requests 98 183 37 122 14 124 65 67

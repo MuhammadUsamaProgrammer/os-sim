@@ -27,6 +27,8 @@
 #include "SchedulingTab.h"
 #include "Style.h"
 #include "SyncTab.h"
+#include "DiskTab.h"
+#include "ModuleKit.h"
 #include "Theme.h"
 
 // Creates the tabs, the log dock (read-only, monospace) and the menus.
@@ -39,10 +41,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     mem_ = new MemoryTab;
     dead_ = new DeadlockTab;
     sync_ = new SyncTab;
+    disk_ = new DiskTab;
     tabs_->addTab(sched_, "Scheduling");
     tabs_->addTab(mem_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
+    tabs_->addTab(disk_, "Disk");
     setCentralWidget(tabs_);
 
     log_ = new QPlainTextEdit;
@@ -60,6 +64,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(mem_, &MemoryTab::logMessage, this, &MainWindow::appendLog);
     connect(dead_, &DeadlockTab::logMessage, this, &MainWindow::appendLog);
     connect(sync_, &SyncTab::logMessage, this, &MainWindow::appendLog);
+    connect(disk_, &DiskTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -141,6 +146,9 @@ bool MainWindow::loadSample(const QString& path) {
     } else if (name.startsWith("banker_") || name.startsWith("deadlock_")) {
         ok = dead_->loadFile(path);
         tabs_->setCurrentWidget(dead_);
+    } else if (name.startsWith("disk_")) {
+        ok = disk_->loadFile(path);
+        tabs_->setCurrentWidget(disk_);
     } else if (name.startsWith("requests_")) {
         // The integrated sample is designed for processes_srtf.csv with Round Robin q=2.
         ok = sched_->loadCsv(ui::samplesDir() + "/processes_srtf.csv");
@@ -299,7 +307,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 7. Process synchronization
     T << "\n=== Synchronization ===\n" << sync_->reportText();
     C << "\n" << sync_->csvSection();
-    // 8. Event log
+    // 8. Disk scheduling
+    T << "\n=== Disk scheduling ===\n" << disk_->reportText();
+    C << "\n" << disk_->csvSection();
+    // 9. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -576,6 +587,37 @@ int MainWindow::runSelfTest() {
             sync_->lastDemo()->ok, "sync: real monitor demo (pthread_cond) checks pass");
     shot(this, "sync_posix_demo");
 
+    // ---- Phase 2, M1: Disk scheduling
+    tabs_->setCurrentWidget(disk_);
+    stCheck(loadSample(sd + "/disk_reference.txt"), "load disk_reference.txt");
+    {
+        const int expect[6] = {640, 236, 331, 382, 299, 322};
+        bool ok = disk_->comparison().size() == 6;
+        for (int i = 0; ok && i < 6; ++i) ok = disk_->comparison()[i].total == expect[i];
+        stCheck(ok, "disk: FCFS 640, SSTF 236, SCAN 331, C-SCAN 382, LOOK 299, C-LOOK 322");
+    }
+    disk_->setAlgorithm(DiskAlgo::SCAN);
+    stCheck(disk_->result() && disk_->result()->algo == DiskAlgo::SCAN && disk_->playback()->length() == 9,
+            "disk: SCAN trace has 9 moves (8 services + 1 boundary transit)");
+    for (int i = 0; i < 4; ++i) disk_->playback()->next();
+    disk_->playback()->prev();
+    stCheck(disk_->playback()->position() == 3 && disk_->statusText().contains("step 3"), "disk: next x4, prev -> step 3");
+    shot(this, "disk_scan");
+    disk_->playback()->setIntervalMs(60);
+    disk_->playback()->run();
+    stCheck(waitFor([&] { return disk_->playback()->position() == disk_->playback()->length(); }, 5000) &&
+            disk_->statusText().contains("total 331"), "disk: playback runs to the end, total 331");
+    disk_->playback()->stop();
+    stCheck(disk_->playback()->position() == 0, "disk: stop returns to step 0");
+    for (int p = 0; p < 7; ++p) stCheck(disk_->loadPreset(p), QString("disk preset %1").arg(p + 1));
+    {
+        DiskConfig bad;
+        bad.requests = {10, 500};
+        stCheck(!disk_->setConfig(bad) && disk_->statusText().contains("outside"), "disk: request outside the range -> message");
+    }
+    disk_->loadPreset(0);
+    shot(this, "disk_reference");
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -593,10 +635,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");
