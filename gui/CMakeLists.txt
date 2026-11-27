@@ -21,7 +21,8 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     NativeRunner.h NativeRunner.cpp
     ProcessTab.h ProcessTab.cpp LifecycleViews.h LifecycleViews.cpp
     IoTab.h IoTab.cpp IoViews.h IoViews.cpp
-    MemAdvTab.h MemAdvTab.cpp MemAdvViews.h MemAdvViews.cpp)
+    MemAdvTab.h MemAdvTab.cpp MemAdvViews.h MemAdvViews.cpp
+    IpcTab.h IpcTab.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                              OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")

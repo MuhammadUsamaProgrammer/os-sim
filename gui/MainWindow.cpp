@@ -31,6 +31,7 @@
 #include "ProcessTab.h"
 #include "IoTab.h"
 #include "MemAdvTab.h"
+#include "IpcTab.h"
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
@@ -48,12 +49,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     disk_ = new DiskTab;
     proc_ = new ProcessTab;
     io_ = new IoTab;
+    ipc_ = new IpcTab;
     tabs_->addTab(sched_, "Scheduling");
     memArea_ = new MemAdvArea(mem_);              // page replacement + Phase 2 memory sub-tabs
     tabs_->addTab(memArea_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
     tabs_->insertTab(1, proc_, "Processes");
+    tabs_->addTab(ipc_, "IPC");
     tabs_->addTab(io_, "I/O");
     tabs_->addTab(disk_, "Disk");
     setCentralWidget(tabs_);
@@ -77,6 +80,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(proc_, &ProcessTab::logMessage, this, &MainWindow::appendLog);
     connect(io_, &IoTab::logMessage, this, &MainWindow::appendLog);
     connect(memArea_, &MemAdvArea::logMessage, this, &MainWindow::appendLog);
+    connect(ipc_, &IpcTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -340,7 +344,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 11. Advanced memory
     T << "\n=== Advanced memory ===\n" << memArea_->reportText();
     C << "\n" << memArea_->csvSection();
-    // 12. Event log
+    // 12. IPC
+    T << "\n=== IPC ===\n" << ipc_->reportText();
+    C << "\n" << ipc_->csvSection();
+    // 13. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -761,6 +768,49 @@ int MainWindow::runSelfTest() {
     showMemoryTab();
     stCheck(mem_->isVisible(), "memory: page-replacement sub-tab still available");
 
+    // ---- Phase 2, M3: IPC
+    tabs_->setCurrentWidget(ipc_);
+    stCheck(ipc_->loadPreset(0) && ipc_->sim()->trace().size() == 9, "ipc: shared-memory preset loaded (8 operations)");
+    {
+        std::string read;
+        for (const IpcSnapshot& s : ipc_->sim()->trace()) if (!s.procs[1].lastData.empty()) read = s.procs[1].lastData;
+        stCheck(read == "HELLO" && !ipc_->sim()->trace().back().shmExists, "ipc: client reads HELLO, segment removed at the end");
+    }
+    for (int i = 0; i < 5; ++i) ipc_->playback()->next();
+    shot(this, "ipc_shared_memory");
+    stCheck(ipc_->loadPreset(2), "ipc: mailbox preset");
+    {
+        int failed = 0;
+        for (const IpcSnapshot& s : ipc_->sim()->trace()) failed += s.failed;
+        stCheck(failed == 2, "ipc: non-blocking send on full and receive on empty fail (2)");
+    }
+    stCheck(ipc_->loadPreset(3) && ipc_->sim()->trace().back().wake, "ipc: blocked receiver wakes on send");
+    stCheck(ipc_->loadPreset(5), "ipc: pipe preset");
+    stCheck(ipc_->sim()->trace().back().event.find("END OF FILE") != std::string::npos, "ipc: pipe reaches EOF");
+    ipc_->playback()->setPosition(4);
+    shot(this, "ipc_pipe");
+    {   // manual operation after stepping back = new branch
+        ipc_->loadPreset(2);
+        ipc_->playback()->setPosition(1);
+        IpcOp r;
+        r.kind = IpcOpKind::Receive;
+        r.proc = 1;
+        stCheck(ipc_->applyOp(r) == "" && ipc_->sim()->trace().back().procs[1].lastData == "first" && ipc_->playback()->length() == 2,
+                "ipc: receive after Prev starts a new branch");
+        IpcOp bad;
+        bad.kind = IpcOpKind::Send;
+        bad.proc = 0;
+        stCheck(ipc_->applyOp(bad) != "", "ipc: empty message refused");
+    }
+    for (int p = 0; p < 8; ++p) stCheck(ipc_->loadPreset(p), QString("ipc preset %1").arg(p + 1));
+    if (NativeRunner::available()) {
+        for (const char* d : {"shm", "msg", "pipe", "fifo"}) {
+            bool ok = ipc_->startDemo(d) && waitFor([&] { return !ipc_->demoRunning(); }, 10000) && ipc_->demoExitCode() == 0;
+            stCheck(ok, QString("ipc live demo %1 exits 0").arg(d));
+        }
+        shot(this, "ipc_live_demo");
+    }
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -778,10 +828,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Advanced memory", "=== IPC", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management", "## Memory allocation", "## Address translation", "## Demand paging", "## IPC",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");
