@@ -29,6 +29,7 @@
 #include "SyncTab.h"
 #include "DiskTab.h"
 #include "ProcessTab.h"
+#include "IoTab.h"
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
@@ -45,11 +46,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sync_ = new SyncTab;
     disk_ = new DiskTab;
     proc_ = new ProcessTab;
+    io_ = new IoTab;
     tabs_->addTab(sched_, "Scheduling");
     tabs_->addTab(mem_, "Memory");
     tabs_->addTab(dead_, "Deadlock");
     tabs_->addTab(sync_, "Synchronization");
     tabs_->insertTab(1, proc_, "Processes");
+    tabs_->addTab(io_, "I/O");
     tabs_->addTab(disk_, "Disk");
     setCentralWidget(tabs_);
 
@@ -70,6 +73,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(sync_, &SyncTab::logMessage, this, &MainWindow::appendLog);
     connect(disk_, &DiskTab::logMessage, this, &MainWindow::appendLog);
     connect(proc_, &ProcessTab::logMessage, this, &MainWindow::appendLog);
+    connect(io_, &IoTab::logMessage, this, &MainWindow::appendLog);
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -321,7 +325,10 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     // 9. Process lifecycle
     T << "\n=== Process lifecycle ===\n" << proc_->reportText();
     C << "\n" << proc_->csvSection();
-    // 10. Event log
+    // 10. I/O management
+    T << "\n=== I/O management ===\n" << io_->reportText();
+    C << "\n" << io_->csvSection();
+    // 11. Event log
     QString logText = log_->toPlainText();
     T << "\n=== Event log ===\n" << logText << "\n";
     C << "\n## Event log\nline\n";
@@ -671,6 +678,38 @@ int MainWindow::runSelfTest() {
         stCheck(waitFor([&] { return !proc_->demoRunning(); }, 4000), "process live demo: Stop ends it");
     }
 
+    // ---- Phase 2, M5: I/O management
+    tabs_->setCurrentWidget(io_);
+    stCheck(io_->loadPreset(5), "io: hand-traced preset");
+    {
+        auto seq = [](const IoResult& r) {
+            QString s;
+            for (const IoTick& k : r.ticks) s += QString(cpuActName(k.cpu)).left(1);
+            return s;
+        };
+        const auto& c = io_->comparison();
+        stCheck(c.size() == 3 && c[0].m.completion == 8 && c[1].m.completion == 8 && c[2].m.completion == 8,
+                "io: all three modes complete at t=8");
+        stCheck(c.size() == 3 && c[0].m.polls == 4 && c[1].m.interrupts == 2 && c[2].m.interrupts == 1 && c[2].m.copy == 0,
+                "io: 4 polls / 2 interrupts / 1 DMA completion interrupt, DMA copies nothing");
+        io_->setMode(IoMode::Interrupt);
+        stCheck(io_->result() && seq(*io_->result()) == "UUUICUIC", "io: interrupt CPU sequence U U U I C U I C");
+    }
+    for (int i = 0; i < 4; ++i) io_->playback()->next();
+    shot(this, "io_interrupt");
+    io_->setMode(IoMode::DMA);
+    io_->playback()->setIntervalMs(60);
+    io_->playback()->run();
+    stCheck(waitFor([&] { return io_->playback()->position() == io_->playback()->length(); }, 5000) &&
+            io_->statusText().contains("DONE: latency 8"), "io: DMA playback to the end, latency 8");
+    io_->playback()->prev();
+    stCheck(io_->playback()->position() == io_->playback()->length() - 1, "io: prev after the end");
+    for (int p = 0; p < 6; ++p) stCheck(io_->loadPreset(p), QString("io preset %1").arg(p + 1));
+    io_->loadPreset(2);
+    stCheck(io_->comparison().size() == 3 && io_->comparison()[2].m.useful > io_->comparison()[1].m.useful,
+            "io: bulk transfer, DMA leaves more useful CPU work than interrupts");
+    shot(this, "io_bulk_dma");
+
     // Export: both files, every section
     sched_->runOnce();
     sched_->compareAll();
@@ -688,10 +727,10 @@ int MainWindow::runSelfTest() {
     QString t = opened ? QString::fromUtf8(tf.readAll()) : QString(), c = opened ? QString::fromUtf8(cf.readAll()) : QString();
     bool allTxt = true, allCsv = true;
     for (const char* sec : {"=== Processes", "=== Scheduling result", "=== Algorithm comparison", "=== Integrated run",
-                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== Event log"}) allTxt = allTxt && t.contains(sec);
+                            "=== Memory", "=== Deadlock", "=== Synchronization", "=== Disk scheduling", "=== Process lifecycle", "=== I/O management", "=== Event log"}) allTxt = allTxt && t.contains(sec);
     for (const char* sec : {"## Processes", "## Scheduling result", "## Algorithm comparison", "## Integrated run",
                             "## Memory summary", "## Memory frame table", "## Deadlock state", "## Deadlock result",
-                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle",
+                            "## Synchronization", "## Synchronization comparison", "## Synchronization POSIX demo", "## Disk scheduling", "## Disk trace", "## Process lifecycle", "## I/O management",
                             "## Event log"}) allCsv = allCsv && c.contains(sec);
     stCheck(opened && allTxt, "report .txt has all sections");
     stCheck(opened && allCsv, "report .csv has all sections");
