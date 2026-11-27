@@ -43,6 +43,7 @@
 #include "SysMonTab.h"
 #include "JobControlTab.h"
 #include "RtSchedTab.h"
+#include "MlqTab.h"
 #include "LayoutAudit.h"
 #include "PanelLayout.h"
 #include "NativeRunner.h"
@@ -71,6 +72,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     threads_ = new ThreadsTab;
     schedArea_ = new QTabWidget;                  // Scheduling: the original page + Phase 3 child views
     schedArea_->addTab(sched_, "CPU Scheduling");
+    mlq_ = new MlqPage;                           // confirmed gap: MLQ / MLFQ (course outline)
+    schedArea_->addTab(mlq_, "Multilevel Queues");
     rt_ = new RtSchedPage;
     schedArea_->addTab(rt_, "Real-Time Scheduling");
     tabs_->addTab(new PageScroll(schedArea_), "Scheduling");
@@ -121,6 +124,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(sysmon_, &SystemMonitorPage::logMessage, this, &MainWindow::appendLog);
     connect(jobs_, &JobControlPage::logMessage, this, &MainWindow::appendLog);
     connect(rt_, &RtSchedPage::logMessage, this, &MainWindow::appendLog);
+    connect(mlq_, &MlqPage::logMessage, this, &MainWindow::appendLog);
+    mlq_->setProcessProvider([this] {
+        std::vector<PCB> p;
+        if (!sched_->readProcesses(p, true)) p.clear();
+        return p;
+    });
 
     // One shared process list: the Memory tab reads the Scheduling tab's table.
     mem_->setProcessProvider([this] {
@@ -490,6 +499,7 @@ bool MainWindow::writeReport(const QString& base, QString* err) {
     T << "\n=== Threading models ===\n" << threads_->reportText();
     C << "\n" << threads_->csvSection();
     // 14. Storage and files
+    T << "\n=== Multilevel queues ===\n" << mlq_->reportText();
     T << "\n=== Real-time scheduling ===\n" << rt_->reportText();
     T << "\n=== Job control (simulated shell) ===\n" << jobs_->reportText();
     T << "\n=== Storage and files (virtual disk) ===\n" << storage_->reportText();
@@ -1050,6 +1060,41 @@ int MainWindow::runSelfTest() {
         shot(this, "threads_live_demo");
     }
 
+    // ---- Phase 3 confirmed gaps: Multilevel queues, readers-writers, dining philosophers
+    {
+        MlqPage* mp = mlq_;
+        showTab(mp);
+        stCheck(mp->loadPreset(0) && mp->result() && std::fabs(mp->result()->sched.avgWaiting - 3.4) < 1e-9 && mp->result()->preemptions == 2,
+                "multilevel queue: fixed queues, avg waiting 3.4, two preemptions by higher queues");
+        stCheck(mp->loadPreset(1) && mp->result()->demotions == 3 && mp->result()->sched.metrics[0].completion == 19,
+                "multilevel feedback queue: long job demoted twice to FCFS, finishes at 19");
+        stCheck(mp->loadPreset(2) && mp->result()->boosts >= 1, "multilevel feedback queue: priority boost");
+        loadSample(sd + "/processes_fcfs.csv");
+        stCheck(mp->copyFromScheduling() && mp->result() && mp->result()->sched.metrics.size() == 3, "multilevel queues: copy the CPU Scheduling process list");
+        showTab(mp);
+        mp->loadPreset(1);
+        mp->playback()->setPosition(10);
+        shot(this, "mlfq");
+        showTab(sync_);
+        sync_->setAlgorithm(SyncAlgo::READERS_WRITERS);
+        bool rwOk = true;
+        for (int i = 0; i < 3; ++i)
+            rwOk = rwOk && sync_->loadScenario(i) && sync_->runToEnd() > 0 && sync_->sim()->stats().completed && sync_->sim()->stats().csViolations == 0;
+        stCheck(rwOk, "sync readers-writers: every scenario completes, a writer is never inside with anybody");
+        sync_->loadScenario(0);
+        for (int k = 0; k < 11; ++k) sync_->stepOnce();
+        shot(this, "sync_readers_writers");
+        sync_->setAlgorithm(SyncAlgo::DINING_PHILOSOPHERS);
+        sync_->loadScenario(0);
+        sync_->runToEnd();
+        stCheck(sync_->sim()->stats().stuck && !sync_->sim()->stats().completed, "sync dining philosophers: naive order deadlocks (circular wait)");
+        shot(this, "sync_philosophers_deadlock");
+        sync_->loadScenario(1);
+        sync_->runToEnd();
+        stCheck(sync_->sim()->stats().completed && sync_->sim()->stats().csViolations == 0, "sync dining philosophers: asymmetric order eats without deadlock");
+        sync_->setAlgorithm(SyncAlgo::MUTEX);
+    }
+
     // ---- Phase 3: Scheduling > Real-Time Scheduling (RM / EDF)
     {
         RtSchedPage* rp = rt_;
@@ -1288,7 +1333,7 @@ int MainWindow::runSelfTest() {
             return nullptr;
         };
         struct T { QWidget* page; int sub; const char* name; };
-        std::vector<T> pages = {{sched_, -1, "Scheduling"}, {rt_, -1, "Scheduling > Real-Time"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
+        std::vector<T> pages = {{sched_, -1, "Scheduling"}, {rt_, -1, "Scheduling > Real-Time"}, {mlq_, -1, "Scheduling > Multilevel Queues"}, {proc_, -1, "Processes"}, {memArea_, 0, "Memory > Page replacement"},
                                 {memArea_, 1, "Memory > Allocation"}, {memArea_, 2, "Memory > Paging"}, {memArea_, 4, "Memory > Demand paging"},
                                 {dead_, -1, "Deadlock"}, {sync_, -1, "Synchronization"}, {threads_, -1, "Threads"}, {ipc_, -1, "IPC"},
                                 {io_, -1, "I/O"}, {disk_, -1, "Disk"},
@@ -1377,7 +1422,7 @@ int MainWindow::runSelfTest() {
         showTab(threads_);
         for (int i = 0; i < 6; ++i) { threads_->loadPreset(i); auditNow(QString("Threads preset %1").arg(i)); }
         showTab(sync_);
-        for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a) { sync_->setAlgorithm((SyncAlgo)a); auditNow(QString("Sync algorithm %1").arg(a)); }
+        for (int a = 0; a <= (int)SyncAlgo::DINING_PHILOSOPHERS; ++a) { sync_->setAlgorithm((SyncAlgo)a); auditNow(QString("Sync algorithm %1").arg(a)); }
         stCheck(presetsOk, "layout: switching presets / algorithms / modes keeps every control reachable" + (firstBad.isEmpty() ? QString() : ": " + firstBad));
         // Dark theme and a window resized after start
         setDarkTheme(true);

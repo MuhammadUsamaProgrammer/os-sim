@@ -180,12 +180,25 @@ void SyncView::paintEvent(QPaintEvent*) {
     int inside = sim_->inCSCount(), cap = sim_->csCapacity();
     bool violation = inside > cap;
     SyncAlgo a = sim_->config().algo;
+    const auto& ps = sim_->procs();
+    if (a == SyncAlgo::READERS_WRITERS) {                       // a writer together with anybody else
+        bool w = false;
+        for (const SyncProc& q : ps) if (q.inCS && q.program == 1) w = true;
+        violation = w && inside > 1;
+    } else if (a == SyncAlgo::DINING_PHILOSOPHERS) {            // two neighbours eating
+        violation = false;
+        for (size_t i = 0; i < ps.size(); ++i) if (ps[i].inCS && ps[(i + 1) % ps.size()].inCS && ps.size() > 1) violation = true;
+    }
     QString csTitle = a == SyncAlgo::MONITOR ? "Inside the monitor" : a == SyncAlgo::COUNTING_SEM
-                      ? QString("Resource in use (max %1)").arg(cap) : "Critical section";
+                      ? QString("Resource in use (max %1)").arg(cap)
+                      : a == SyncAlgo::READERS_WRITERS ? "Shared data (many readers OR one writer)"
+                      : a == SyncAlgo::DINING_PHILOSOPHERS ? QString("Eating (max %1, never two neighbours)").arg(cap) : "Critical section";
     lane(l.cs, csTitle, violation ? ui::faultColor() : ui::hitColor(), violation ? 3 : 2);
     p.setFont(small);
     QString csInfo;
     if (a == SyncAlgo::COUNTING_SEM) csInfo = QString("%1 of %2 instances in use").arg(inside).arg(cap);
+    else if (a == SyncAlgo::READERS_WRITERS) csInfo = "readers share the data; a writer is alone";
+    else if (a == SyncAlgo::DINING_PHILOSOPHERS) csInfo = QString("%1 philosopher(s) eating").arg(inside);
     else if (a == SyncAlgo::PRODUCER_CONSUMER || a == SyncAlgo::MONITOR) csInfo = "buffer access (in, out, count)";
     else csInfo = QString("counter = %1").arg(sim_->counter());
     p.setPen(ink);

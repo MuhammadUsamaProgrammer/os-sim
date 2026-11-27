@@ -96,7 +96,8 @@ private:
     QLabel* scenarioDesc_;
     QFormLayout* paramForm_;
     QSpinBox *procSpin_, *iterSpin_, *resSpin_, *prodSpin_, *consSpin_, *capSpin_, *prodSpeed_, *consSpeed_,
-             *sliceSpin_, *seedSpin_;
+             *sliceSpin_, *seedSpin_, *readersSpin_, *writersSpin_, *philSpin_;
+    QComboBox* philOrder_;                         // dining philosophers: naive / asymmetric
     QPushButton *runBtn_, *pauseBtn_, *resumeBtn_, *stepBtn_, *stopBtn_, *resetBtn_, *endBtn_;
     QSlider* speed_;
     QLabel* speedLabel_;

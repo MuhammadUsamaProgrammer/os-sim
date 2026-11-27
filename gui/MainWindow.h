@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton; class QDockWidget; class PanelSplitter;
-class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab; class StorageArea; class SystemMonitorPage; class JobControlPage; class RtSchedPage;
+class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab; class StorageArea; class SystemMonitorPage; class JobControlPage; class RtSchedPage; class MlqPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -56,6 +56,7 @@ private:
     JobControlPage* jobs_;
     QTabWidget* schedArea_;         // Scheduling: CPU Scheduling, Multilevel Queues, Real-Time Scheduling
     RtSchedPage* rt_;
+    MlqPage* mlq_;
     void showMemoryTab();
     void showTab(QWidget* page);
     QWidget* pageOf(int i) const;

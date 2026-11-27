@@ -30,7 +30,8 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     HeapLab.h HeapLab.cpp
     SysMonTab.h SysMonTab.cpp
     JobControlTab.h JobControlTab.cpp
-    RtSchedTab.h RtSchedTab.cpp)
+    RtSchedTab.h RtSchedTab.cpp
+    MlqTab.h MlqTab.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                              OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")

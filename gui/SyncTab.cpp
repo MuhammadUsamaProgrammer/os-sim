@@ -59,7 +59,7 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
 
     // ================= left column: algorithm, parameters, controls, explanation
     algoCombo_ = new QComboBox;
-    for (int a = 0; a <= (int)SyncAlgo::MONITOR; ++a) algoCombo_->addItem(syncAlgoName((SyncAlgo)a));
+    for (int a = 0; a <= (int)SyncAlgo::DINING_PHILOSOPHERS; ++a) algoCombo_->addItem(syncAlgoName((SyncAlgo)a));
     scenarioCombo_ = new QComboBox;
     scenarioDesc_ = new QLabel;
     scenarioDesc_->setWordWrap(true);
@@ -83,6 +83,11 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     orderCombo_ = new QComboBox;
     orderCombo_->addItems({"Round robin", "Random (seeded)"});
     seedSpin_ = makeSpin(1, 99999, 1, "Seed of the random order (same seed = same run)");
+    readersSpin_ = makeSpin(1, 6, 3, "Readers-writers: number of readers");
+    writersSpin_ = makeSpin(1, 4, 1, "Readers-writers: number of writers");
+    philSpin_ = makeSpin(2, 6, 5, "Dining philosophers: number of philosophers (= chopsticks)");
+    philOrder_ = new QComboBox;
+    philOrder_->addItems({"Naive: left chopstick first (can deadlock)", "Asymmetric: odd philosophers right first"});
     auto* paramBox = new QGroupBox("Parameters");
     paramForm_ = new QFormLayout(paramBox);
     paramForm_->setSpacing(6);
@@ -94,6 +99,10 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     paramForm_->addRow("Buffer capacity N:", capSpin_);
     paramForm_->addRow("Producer speed:", prodSpeed_);
     paramForm_->addRow("Consumer speed:", consSpeed_);
+    paramForm_->addRow("Readers:", readersSpin_);
+    paramForm_->addRow("Writers:", writersSpin_);
+    paramForm_->addRow("Philosophers:", philSpin_);
+    paramForm_->addRow("Chopstick order:", philOrder_);
     paramForm_->addRow("Instructions per turn:", sliceSpin_);
     paramForm_->addRow("Interleaving:", orderCombo_);
     paramForm_->addRow("Seed:", seedSpin_);
@@ -351,8 +360,9 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     connect(algoCombo_, &QComboBox::currentIndexChanged, this, &SyncTab::onAlgoChanged);
     connect(scenarioCombo_, &QComboBox::currentIndexChanged, this, &SyncTab::onScenarioChanged);
     for (QSpinBox* s : {procSpin_, iterSpin_, resSpin_, prodSpin_, consSpin_, capSpin_, prodSpeed_, consSpeed_,
-                        sliceSpin_, seedSpin_})
+                        sliceSpin_, seedSpin_, readersSpin_, writersSpin_, philSpin_})
         connect(s, &QSpinBox::valueChanged, this, &SyncTab::onParamChanged);
+    connect(philOrder_, &QComboBox::currentIndexChanged, this, &SyncTab::onParamChanged);
     connect(orderCombo_, &QComboBox::currentIndexChanged, this, &SyncTab::onParamChanged);
     connect(runBtn_, &QPushButton::clicked, this, &SyncTab::run);
     connect(pauseBtn_, &QPushButton::clicked, this, &SyncTab::pause);
@@ -406,14 +416,21 @@ void SyncTab::prepareAlgo(SyncAlgo a) {
     for (int i = 1; i < paras.size(); ++i) html += "<p>" + paras[i] + "</p>";
     html += "<p><b>Guarantee:</b> " + QString::fromStdString(syncGuarantee(a)).toHtmlEscaped() + "</p>";
     explain_->setHtml(html);
-    demoKind_->setCurrentIndex((int)a);                   // same order as SyncAlgo
-    setDemoDefaults((int)a);
+    // same order as SyncAlgo; the Phase 3 classical problems use the real semaphore demo
+    int demo = a <= SyncAlgo::MONITOR ? (int)a : (int)SyncDemoKind::BINARY_SEM;
+    demoKind_->setCurrentIndex(demo);
+    setDemoDefaults(demo);
 }
 
 void SyncTab::updateParamVisibility() {
     SyncAlgo a = algorithm();
     bool buf = isBuffer(a);
-    paramForm_->setRowVisible(procSpin_, !buf);
+    bool rw = a == SyncAlgo::READERS_WRITERS, dp = a == SyncAlgo::DINING_PHILOSOPHERS;
+    paramForm_->setRowVisible(procSpin_, !buf && !rw && !dp);
+    paramForm_->setRowVisible(readersSpin_, rw);
+    paramForm_->setRowVisible(writersSpin_, rw);
+    paramForm_->setRowVisible(philSpin_, dp);
+    paramForm_->setRowVisible(philOrder_, dp);
     procSpin_->setEnabled(a != SyncAlgo::PETERSON);
     procSpin_->setToolTip(a == SyncAlgo::PETERSON ? "Peterson's solution is for exactly 2 processes"
                                                   : "Number of processes");
@@ -437,6 +454,10 @@ SyncConfig SyncTab::configFromControls() const {
     c.slice = sliceSpin_->value();
     c.randomOrder = orderCombo_->currentIndex() == 1;
     c.seed = (unsigned)seedSpin_->value();
+    c.readers = readersSpin_->value();
+    c.writers = writersSpin_->value();
+    c.philosophers = philSpin_->value();
+    c.asymmetric = philOrder_->currentIndex() == 1;
     c.script = script_;
     return c;
 }
@@ -454,6 +475,10 @@ void SyncTab::setControls(const SyncConfig& c) {
     sliceSpin_->setValue(c.slice);
     orderCombo_->setCurrentIndex(c.randomOrder ? 1 : 0);
     seedSpin_->setValue((int)c.seed);
+    readersSpin_->setValue(c.readers);
+    writersSpin_->setValue(c.writers);
+    philSpin_->setValue(c.philosophers);
+    philOrder_->setCurrentIndex(c.asymmetric ? 1 : 0);
     loading_ = false;
     updateParamVisibility();
 }
@@ -752,7 +777,8 @@ void SyncTab::updateVariables() {
 void SyncTab::updateStats() {
     SyncStats s = sim_->stats();
     SyncAlgo a = sim_->config().algo;
-    QString what = a == SyncAlgo::COUNTING_SEM ? "resource uses" : isBuffer(a) ? "items consumed" : "counter";
+    QString what = a == SyncAlgo::COUNTING_SEM ? "resource uses" : isBuffer(a) ? "items consumed"
+                 : a == SyncAlgo::READERS_WRITERS ? "reads + writes" : a == SyncAlgo::DINING_PHILOSOPHERS ? "meals" : "counter";
     std::vector<std::pair<QString, QString>> rows = {
         {"Steps executed", QString::number(s.steps)},
         {"Expected " + what, QString::number(s.expected)},

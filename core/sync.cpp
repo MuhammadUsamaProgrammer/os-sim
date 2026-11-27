@@ -14,6 +14,8 @@ const char* syncAlgoName(SyncAlgo a) {
         case SyncAlgo::COUNTING_SEM: return "Counting semaphore";
         case SyncAlgo::PRODUCER_CONSUMER: return "Producer-consumer (semaphores)";
         case SyncAlgo::MONITOR: return "Monitor + condition variables";
+        case SyncAlgo::READERS_WRITERS: return "Readers-writers (semaphores)";
+        case SyncAlgo::DINING_PHILOSOPHERS: return "Dining philosophers (semaphores)";
     }
     return "?";
 }
@@ -55,12 +57,18 @@ void validateSyncConfig(const SyncConfig& c) {
              "every consumer needs at least one item: producers x items must be >= consumers");
     } else if (c.algo == SyncAlgo::PETERSON) {
         need(c.processes == 2, "Peterson's solution works for exactly 2 processes");
+    } else if (c.algo == SyncAlgo::READERS_WRITERS) {
+        need(c.readers >= 1 && c.readers <= 6 && c.writers >= 1 && c.writers <= 4 && c.readers + c.writers <= 8,
+             "readers 1..6, writers 1..4, at most 8 processes");
+    } else if (c.algo == SyncAlgo::DINING_PHILOSOPHERS) {
+        need(c.philosophers >= 2 && c.philosophers <= 6, "philosophers must be between 2 and 6");
     } else {
         need(c.processes >= 1 && c.processes <= 8, "processes must be between 1 and 8");
     }
     if (c.algo == SyncAlgo::COUNTING_SEM)
         need(c.resources >= 1 && c.resources <= 8, "resource instances must be between 1 and 8");
-    int n = buffer ? c.producers + c.consumers : c.processes;
+    int n = buffer ? c.producers + c.consumers : c.algo == SyncAlgo::READERS_WRITERS ? c.readers + c.writers
+                   : c.algo == SyncAlgo::DINING_PHILOSOPHERS ? c.philosophers : c.processes;
     for (int s : c.script) need(s >= 0 && s < n, "scenario script names a process that does not exist");
 }
 
@@ -166,6 +174,47 @@ SyncSim::SyncSim(const SyncConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
             titles_ = {"Producer (calls the monitor)", "Consumer (calls the monitor)"};
             break;
         }
+        case SyncAlgo::READERS_WRITERS: {
+            int rw = addObj("rw_mutex", ObjKind::Semaphore, 1);
+            int mx = addObj("mutex", ObjKind::Semaphore, 1);
+            std::vector<Instr> rd, wr;
+            rd.push_back({Op::SemWait, mx, 0, "wait(mutex);"});
+            rd.push_back({Op::RcInc, -1, 0, "    read_count++;"});
+            rd.push_back({Op::RcFirstWait, rw, 0, "    if (read_count == 1) wait(rw_mutex);   // first reader locks out writers"});
+            rd.push_back({Op::SemSignal, mx, 0, "signal(mutex);"});
+            rd.push_back({Op::Nop, -1, 0, "read the shared data ...;               // many readers at once", true, false});
+            rd.push_back({Op::DoneRead, -1, 0, "... done reading;", false, true});
+            rd.push_back({Op::SemWait, mx, 0, "wait(mutex);"});
+            rd.push_back({Op::RcDec, -1, 0, "    read_count--;"});
+            rd.push_back({Op::RcLastSignal, rw, 0, "    if (read_count == 0) signal(rw_mutex); // last reader lets writers in"});
+            rd.push_back({Op::SemSignal, mx, 0, "signal(mutex);"});
+            wr.push_back({Op::SemWait, rw, 0, "wait(rw_mutex);", true, false});
+            wr.push_back({Op::WriteData, -1, 0, "    write the shared data;             // exclusive"});
+            wr.push_back({Op::SemSignal, rw, 0, "signal(rw_mutex);", false, true});
+            programs_ = {rd, wr};
+            titles_ = {"Reader", "Writer"};
+            break;
+        }
+        case SyncAlgo::DINING_PHILOSOPHERS: {
+            int n = cfg.philosophers;
+            std::vector<int> chop;
+            for (int i = 0; i < n; ++i) chop.push_back(addObj("chopstick[" + std::to_string(i) + "]", ObjKind::Semaphore, 1));
+            for (int i = 0; i < n; ++i) {
+                int L = i, R = (i + 1) % n;
+                bool swap = cfg.asymmetric && i % 2 == 1;            // odd philosophers: right first
+                int a = swap ? R : L, b = swap ? L : R;
+                std::vector<Instr> ph;
+                ph.push_back({Op::Nop, -1, 0, "think();"});
+                ph.push_back({Op::SemWait, chop[a], 0, "wait(chopstick[" + std::to_string(a) + "]);   // " + (swap ? "right" : "left") + " first"});
+                ph.push_back({Op::SemWait, chop[b], 0, "wait(chopstick[" + std::to_string(b) + "]);", true, false});
+                ph.push_back({Op::Eat, -1, 0, "    eat();"});
+                ph.push_back({Op::SemSignal, chop[a], 0, "signal(chopstick[" + std::to_string(a) + "]);", false, true});
+                ph.push_back({Op::SemSignal, chop[b], 0, "signal(chopstick[" + std::to_string(b) + "]);"});
+                programs_.push_back(ph);
+                titles_.push_back("Philosopher " + std::to_string(i) + " (chopsticks " + std::to_string(L) + " and " + std::to_string(R) + ")");
+            }
+            break;
+        }
     }
     if (programs_.empty()) programs_.push_back(prog);
 
@@ -186,6 +235,20 @@ SyncSim::SyncSim(const SyncConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
             procs_.push_back(p);
         }
         buffer_.assign(cfg.capacity, -1);
+    } else if (cfg.algo == SyncAlgo::READERS_WRITERS) {
+        for (int i = 0; i < cfg.readers + cfg.writers; ++i) {
+            SyncProc p;
+            bool w = i >= cfg.readers;
+            p.id = i; p.name = w ? "Writer" + std::to_string(i - cfg.readers) : "Reader" + std::to_string(i);
+            p.program = w ? 1 : 0; p.iterations = cfg.iterations;
+            procs_.push_back(p);
+        }
+    } else if (cfg.algo == SyncAlgo::DINING_PHILOSOPHERS) {
+        for (int i = 0; i < cfg.philosophers; ++i) {
+            SyncProc p;
+            p.id = i; p.name = "Phil" + std::to_string(i); p.program = i; p.iterations = cfg.iterations;
+            procs_.push_back(p);
+        }
     } else {
         for (int i = 0; i < cfg.processes; ++i) {
             SyncProc p;
@@ -218,9 +281,27 @@ int SyncSim::inCSCount() const {
 }
 
 // Entering the critical section: count it, and record a violation if it was already full.
+int SyncSim::csCapacity() const {
+    switch (cfg_.algo) {
+        case SyncAlgo::COUNTING_SEM: return cfg_.resources;
+        case SyncAlgo::READERS_WRITERS: return cfg_.readers;          // readers share; a writer needs it alone
+        case SyncAlgo::DINING_PHILOSOPHERS: return cfg_.philosophers / 2;
+        default: return 1;
+    }
+}
+
 void SyncSim::enterCS(int p) {
     if (procs_[p].inCS) return;
-    if (inCSCount() >= csCapacity()) {
+    bool violation;
+    if (cfg_.algo == SyncAlgo::READERS_WRITERS) {
+        bool writer = procs_[p].program == 1, writerInside = false;
+        for (const SyncProc& q : procs_) if (q.inCS && q.program == 1) writerInside = true;
+        violation = writerInside || (writer && inCSCount() > 0);
+    } else if (cfg_.algo == SyncAlgo::DINING_PHILOSOPHERS) {
+        int n = (int)procs_.size();
+        violation = procs_[(p + 1) % n].inCS || procs_[(p + n - 1) % n].inCS;      // a neighbour eats with a shared chopstick
+    } else violation = inCSCount() >= csCapacity();
+    if (violation) {
         ++csViolations_;
         log_.push_back("[s=" + std::to_string(steps_) + "] VIOLATION: " + procs_[p].name +
                        " enters the critical section while it is already full");
@@ -354,6 +435,9 @@ bool SyncSim::step(int pid) {
             what = o.name + " released" + (first >= 0 ? " -> handed to " + procs_[first].name : "");
             break;
         }
+        case Op::RcFirstWait:
+            if (readCount_ != 1) { what = "read_count = " + std::to_string(readCount_) + " != 1: another reader already holds rw_mutex"; break; }
+            [[fallthrough]];
         case Op::SemWait: {
             SyncObject& s = objs_[in.obj];
             if (s.value > 0) {
@@ -366,6 +450,9 @@ bool SyncSim::step(int pid) {
             }
             break;
         }
+        case Op::RcLastSignal:
+            if (readCount_ != 0) { what = "read_count = " + std::to_string(readCount_) + " != 0: readers still inside, rw_mutex stays taken"; break; }
+            [[fallthrough]];
         case Op::SemSignal: {
             SyncObject& s = objs_[in.obj];
             if (!s.queue.empty()) {
@@ -380,6 +467,11 @@ bool SyncSim::step(int pid) {
             }
             break;
         }
+        case Op::RcInc: readCount_++; what = "read_count = " + std::to_string(readCount_); break;
+        case Op::RcDec: readCount_--; what = "read_count = " + std::to_string(readCount_); break;
+        case Op::DoneRead: reads_++; what = "read finished (" + std::to_string(reads_) + " reads)"; break;
+        case Op::WriteData: rwWrites_++; what = "shared data written (" + std::to_string(rwWrites_) + " writes)"; break;
+        case Op::Eat: meals_++; what = P.name + " eats (meal " + std::to_string(meals_) + ")"; break;
         case Op::UseResource:
             inUse_++;
             what = "using an instance, in_use = " + std::to_string(inUse_);
@@ -557,6 +649,14 @@ SyncStats SyncSim::stats() const {
             s.actual = s.consumed;
             s.lostUpdates = allDone ? s.expected - s.consumed : 0;
             break;
+        case SyncAlgo::READERS_WRITERS:
+            s.expected = (cfg_.readers + cfg_.writers) * cfg_.iterations;
+            s.actual = reads_ + rwWrites_;
+            break;
+        case SyncAlgo::DINING_PHILOSOPHERS:
+            s.expected = cfg_.philosophers * cfg_.iterations;
+            s.actual = meals_;
+            break;
     }
     return s;
 }
@@ -592,6 +692,23 @@ std::vector<std::pair<std::string, std::string>> SyncSim::variables() const {
                                                     std::to_string(consumedItems_.size())});
             break;
         }
+        case SyncAlgo::READERS_WRITERS: {
+            int rIn = 0, wIn = 0;
+            for (const SyncProc& p : procs_) if (p.inCS) (p.program == 1 ? wIn : rIn)++;
+            v.push_back({"read_count", std::to_string(readCount_)});
+            v.push_back({"readers reading now", std::to_string(rIn)});
+            v.push_back({"writers writing now", std::to_string(wIn)});
+            v.push_back({"reads / writes done", std::to_string(reads_) + " / " + std::to_string(rwWrites_)});
+            break;
+        }
+        case SyncAlgo::DINING_PHILOSOPHERS: {
+            std::string eating;
+            for (const SyncProc& p : procs_) if (p.inCS) eating += (eating.empty() ? "" : ", ") + p.name;
+            v.push_back({"eating now", eating.empty() ? "nobody" : eating});
+            v.push_back({"meals eaten", std::to_string(meals_)});
+            for (const SyncProc& p : procs_) v.push_back({p.name + " meals", std::to_string(p.itersDone)});
+            break;
+        }
     }
     for (const SyncObject& o : objs_) {
         if (o.kind == ObjKind::Semaphore) v.push_back({o.name + " (semaphore)", std::to_string(o.value)});
@@ -610,7 +727,8 @@ std::string SyncSim::stateKey() const {
         k << p.pc << ',' << p.itersDone << ',' << p.reg << ',' << p.item << ',' << (int)p.state << ','
           << p.inCS << ',' << p.resumePc << ';';
     k << '|' << counter_ << ',' << writes_ << ',' << interested_[0] << interested_[1] << ',' << turn_ << ','
-      << in_ << ',' << out_ << ',' << count_ << ',' << inUse_ << ',' << nextItem_ << '|';
+      << in_ << ',' << out_ << ',' << count_ << ',' << inUse_ << ',' << nextItem_ << ',' << readCount_ << ',' << reads_ << ','
+      << rwWrites_ << ',' << meals_ << '|';
     for (const SyncObject& o : objs_) {
         k << o.value << ',' << o.owner << ':';
         for (int q : o.queue) k << q << ' ';
@@ -719,6 +837,42 @@ std::vector<SyncScenario> syncScenarios(SyncAlgo a) {
                          "The buffer never overflows or underflows.", many});
             break;
         }
+        case SyncAlgo::READERS_WRITERS: {
+            SyncConfig share = c;
+            share.readers = 3; share.writers = 1; share.iterations = 1;
+            share.script = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 2, 2, 2, 2, 2};
+            s.push_back({"Readers share, the writer waits",
+                         "Reader0 and Reader1 read at the same time; Writer0 blocks on rw_mutex until the LAST reader leaves "
+                         "(read_count == 0 -> signal(rw_mutex)).", share});
+            SyncConfig starve = c;
+            starve.readers = 3; starve.writers = 1; starve.iterations = 3; starve.slice = 2;
+            starve.script = {0, 0, 0, 0, 0, 3};
+            s.push_back({"Readers' preference: the writer can starve",
+                         "While readers keep overlapping, read_count never drops to 0 and the writer keeps waiting "
+                         "(first readers-writers problem).", starve});
+            SyncConfig rnd = c;
+            rnd.readers = 3; rnd.writers = 2; rnd.iterations = 2; rnd.randomOrder = true; rnd.seed = 5;
+            s.push_back({"3 readers, 2 writers, random order (seed 5)",
+                         "Any interleaving: a writer is never inside together with anybody else.", rnd});
+            break;
+        }
+        case SyncAlgo::DINING_PHILOSOPHERS: {
+            SyncConfig dead = c;
+            dead.philosophers = 5; dead.iterations = 1; dead.asymmetric = false;
+            dead.script = {0, 0, 1, 1, 2, 2, 3, 3, 4, 4};
+            s.push_back({"Naive: every philosopher takes the left chopstick -> DEADLOCK",
+                         "All five think and pick up their LEFT chopstick; then each waits for the right one, held by the "
+                         "neighbour - a circular wait: nobody can run (stuck).", dead});
+            SyncConfig asym = dead;
+            asym.asymmetric = true;
+            s.push_back({"Asymmetric: odd philosophers take the right chopstick first",
+                         "Same start, but the circular wait is broken: some philosopher always gets both chopsticks; "
+                         "everybody eats.", asym});
+            SyncConfig rnd = c;
+            rnd.philosophers = 5; rnd.iterations = 2; rnd.asymmetric = true; rnd.randomOrder = true; rnd.seed = 4;
+            s.push_back({"Asymmetric, random order (seed 4)", "Neighbours never eat at the same time; no deadlock.", rnd});
+            break;
+        }
     }
     return s;
 }
@@ -737,6 +891,9 @@ std::string syncGuarantee(SyncAlgo a) {
         case SyncAlgo::COUNTING_SEM: return "At most S processes use the resource at the same time";
         case SyncAlgo::PRODUCER_CONSUMER: return "No overflow, no underflow, mutual exclusion on the buffer";
         case SyncAlgo::MONITOR: return "One process inside the monitor; waits only while the condition is false";
+        case SyncAlgo::READERS_WRITERS: return "Many readers OR one writer; readers' preference: writers can starve";
+        case SyncAlgo::DINING_PHILOSOPHERS:
+            return "Neighbours never eat together; naive order can deadlock (circular wait), the asymmetric order cannot";
     }
     return "";
 }
@@ -809,6 +966,22 @@ std::string syncExplanation(SyncAlgo a) {
                    "lock and sleeps; cond.signal() moves one sleeper to the entry queue (Mesa / pthread semantics: the "
                    "signaller keeps the lock), so the woken process must re-check its condition - hence while, not if.\n"
                    "Real code: pthread_mutex_t + pthread_cond_wait / pthread_cond_signal.";
+        case SyncAlgo::READERS_WRITERS:
+            return "Readers-writers (first problem: readers' preference)\n"
+                   "Many readers may read the shared data at the same time, but a writer needs it alone. rw_mutex = 1 "
+                   "excludes writers; read_count counts the readers inside and is protected by mutex = 1. The FIRST reader "
+                   "waits on rw_mutex (locking writers out), the LAST reader signals it.\n"
+                   "Consequence: while readers keep overlapping, read_count never reaches 0 and a waiting writer can starve. "
+                   "Writer-preference or fair variants add more semaphores (not shown).\n"
+                   "Real code: sem_t or pthread_rwlock_t (which has its own fairness policy).";
+        case SyncAlgo::DINING_PHILOSOPHERS:
+            return "Dining philosophers\n"
+                   "N philosophers share N chopsticks (binary semaphores); philosopher i needs chopsticks i and (i+1) mod N. "
+                   "If every philosopher takes the left chopstick first, all four deadlock conditions hold (mutual "
+                   "exclusion, hold and wait, no preemption, CIRCULAR WAIT) and nobody can continue.\n"
+                   "The asymmetric solution lets odd philosophers take the right chopstick first; the circular wait "
+                   "cannot form, so there is no deadlock (resource ordering - compare deadlock prevention). Neighbours "
+                   "never eat at the same time; at most N/2 eat at once.";
     }
     return "";
 }

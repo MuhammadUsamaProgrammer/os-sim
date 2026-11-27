@@ -2,7 +2,8 @@
 //
 // OS concepts: race condition, critical section, Peterson's solution, mutex locks,
 // binary and counting semaphores, the bounded-buffer (producer-consumer) problem,
-// monitors with condition variables.
+// monitors with condition variables, readers-writers (first problem, readers' preference) and the
+// dining philosophers (naive = deadlock possible, asymmetric = deadlock-free) - Phase 3 gap fill.
 //
 // How it works: every simulated process runs a small program of pseudocode lines.
 // One call to SyncSim::step(pid) executes exactly ONE line of that process
@@ -19,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-enum class SyncAlgo { RACE, PETERSON, MUTEX, BINARY_SEM, COUNTING_SEM, PRODUCER_CONSUMER, MONITOR };
+enum class SyncAlgo { RACE, PETERSON, MUTEX, BINARY_SEM, COUNTING_SEM, PRODUCER_CONSUMER, MONITOR, READERS_WRITERS, DINING_PHILOSOPHERS };
 const char* syncAlgoName(SyncAlgo);
 
 // Process states shown in the GUI. Running = executed the last step.
@@ -45,7 +46,13 @@ enum class Op {
     CondWait,         // cond.wait(): release the monitor and sleep (obj = condition)
     CondSignal,       // cond.signal(): move one waiter to the monitor entry queue (Mesa)
     Produce,          // item = produce_item();
-    Consume           // consume_item(item);
+    Consume,          // consume_item(item);
+    RcInc, RcDec,     // readers-writers: read_count++ / read_count--
+    RcFirstWait,      // if (read_count == 1) wait(rw_mutex);   (obj = rw_mutex)
+    RcLastSignal,     // if (read_count == 0) signal(rw_mutex); (obj = rw_mutex)
+    DoneRead,         // reader leaves the shared data (one read completed)
+    WriteData,        // writer modifies the shared data (one write completed)
+    Eat               // philosopher eats (one meal)
 };
 
 struct Instr {
@@ -97,6 +104,9 @@ struct SyncConfig {
     bool randomOrder = false; // false: round robin, true: seeded random choice
     unsigned seed = 1;
     std::vector<int> script;  // forced process order for the first steps (sample scenarios)
+    int readers = 3, writers = 1;      // READERS_WRITERS
+    int philosophers = 5;              // DINING_PHILOSOPHERS
+    bool asymmetric = false;           // philosophers: odd ones take the RIGHT chopstick first (no deadlock)
 };
 // Throws std::invalid_argument with a clear message on a bad configuration.
 void validateSyncConfig(const SyncConfig&);
@@ -152,7 +162,7 @@ public:
     bool interested(int i) const { return interested_[i & 1]; }
     int turn() const { return turn_; }
     int inCSCount() const;
-    int csCapacity() const { return cfg_.algo == SyncAlgo::COUNTING_SEM ? cfg_.resources : 1; }
+    int csCapacity() const;                    // allowed inside at once (readers share, philosophers N/2)
     const std::vector<SyncStepRecord>& history() const { return history_; }
     const std::vector<std::string>& log() const { return log_; }
     SyncStats stats() const;
@@ -182,6 +192,7 @@ private:
     std::vector<int> buffer_;
     int in_ = 0, out_ = 0, count_ = 0, nextItem_ = 0, inUse_ = 0, uses_ = 0;
     std::vector<int> producedItems_, consumedItems_;
+    int readCount_ = 0, reads_ = 0, rwWrites_ = 0, meals_ = 0;   // readers-writers / philosophers
 
     // statistics and history
     int steps_ = 0, csViolations_ = 0, maxInCS_ = 0, overflows_ = 0, underflows_ = 0;
