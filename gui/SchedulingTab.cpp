@@ -419,6 +419,15 @@ void SchedulingTab::stopAnimation() {
 
 bool SchedulingTab::animationRunning() const { return bridge_->running(); }
 
+// Used when the tab is hidden from the workspace (Modules menu): the engine threads wait on the
+// pause condition variable, the state is kept and the user resumes manually.
+void SchedulingTab::pauseAnimation() {
+    if (!bridge_->running() || paused_) return;
+    paused_ = true;
+    bridge_->pause();
+    pauseBtn_->setText("Resume");
+}
+
 void SchedulingTab::setAnimControls(bool running) {
     pauseBtn_->setEnabled(running);
     stepBtn_->setEnabled(running);

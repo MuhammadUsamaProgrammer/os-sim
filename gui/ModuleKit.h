@@ -46,6 +46,7 @@ public:
 public slots:
     void run();
     void togglePause();
+    void pause();                                  // pauses only if playing (resume with Pause / Run)
     void next();
     void prev();
     void stop();

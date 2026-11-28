@@ -49,6 +49,13 @@
 #include "NativeRunner.h"
 #include "ModuleKit.h"
 #include "Theme.h"
+#include "ModuleManager.h"
+#include "WorkspaceUi.h"
+#include <QWidgetAction>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
+#include <QLineEdit>
+#include <QKeyEvent>
 
 // Creates the tabs, the log dock (read-only, monospace) and the menus.
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -150,9 +157,54 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage("Deadlock during the integrated run: its state was copied to the Deadlock tab", 8000);
     });
 
+    registerModules();
     buildMenus();
     statusBar()->showMessage("Ready. Load a sample from File > Load sample, or enter processes.");
     loadSample(ui::samplesDir() + "/processes_fcfs.csv");
+    modules_->restoreCurrentFromStore();          // the module selected when OS-Sim was closed
+    for (QTabWidget* a : std::initializer_list<QTabWidget*>{tabs_, schedArea_, procArea_, memArea_, storage_})
+        connect(a, &QTabWidget::currentChanged, modules_, [this] { modules_->saveCurrentToStore(); });
+}
+
+QString& MainWindow::workspaceStore() { static QString org = "OS-Sim"; return org; }
+
+// Module Visibility Manager registry: every parent tab and every child view of the sub-tab
+// areas, with stable ids, in navigation order. Display names are the tab texts.
+void MainWindow::registerModules() {
+    modules_ = new ModuleManager(this);
+    auto text = [](QTabWidget* a, int i) { return a->tabText(i).replace("&&", "&"); };
+    const std::vector<std::pair<QWidget*, QString>> tops = {
+        {schedArea_, "scheduling"}, {procArea_, "processes"}, {memArea_, "memory"}, {dead_, "deadlock"},
+        {sync_, "synchronization"}, {threads_, "threads"}, {ipc_, "ipc"}, {io_, "io"}, {disk_, "disk"}, {storage_, "storage"}};
+    for (int i = 0; i < tabs_->count(); ++i)
+        for (const auto& [w, id] : tops)
+            if (pageOf(i) == w) modules_->add(id, text(tabs_, i), "", tabs_, tabs_->widget(i));
+    // Child views. Ids follow the tab order; an area with an unexpected number of tabs still gets
+    // every tab registered (generic ids), so nothing can become unreachable.
+    auto children = [&](const QString& parent, QTabWidget* area, const QStringList& ids) {
+        for (int k = 0; k < area->count(); ++k)
+            modules_->add(parent + "." + (k < ids.size() && area->count() == ids.size() ? ids[k] : QString("view%1").arg(k + 1)),
+                          text(area, k), parent, area, area->widget(k));
+    };
+    children("scheduling", schedArea_, {"cpu", "mlq", "realtime"});
+    children("processes", procArea_, {"lifecycle", "monitor", "jobs"});
+    children("memory", memArea_, {"replacement", "allocation", "paging", "segmentation", "demand", "swapping", "thrashing", "heap"});
+    children("storage", storage_, {"explorer", "access", "blocks", "recovery"});
+    // Pages whose playback is not a PlaybackBar
+    modules_->setPauseHook("scheduling.cpu", [this] { sched_->pauseAnimation(); });
+    modules_->setPauseHook("synchronization", [this] { sync_->pause(); });
+    connect(modules_, &ModuleManager::changed, this, [this] { syncViewActions(); });
+    modules_->setStore(workspaceStore());
+    modules_->loadFromStore();
+    for (const QString& w : modules_->loadWarnings()) appendLog("[workspace] " + w);
+}
+
+// Manage Workspace dialog (non-modal, created once).
+void MainWindow::openWorkspaceDialog() {
+    if (!wsDialog_) wsDialog_ = new WorkspaceDialog(modules_, this);
+    wsDialog_->show();
+    wsDialog_->raise();
+    wsDialog_->activateWindow();
 }
 
 // Children may still emit signals while they are destroyed (e.g. a live demo helper that
@@ -220,13 +272,22 @@ void MainWindow::syncViewActions() {
 
 // Shows the page: selects its top-level tab and, for a page inside a sub-tab area (Memory,
 // Scheduling, Processes, Storage & Files), every enclosing sub-tab.
-void MainWindow::showTab(QWidget* page) {
+bool MainWindow::showTab(QWidget* page) {
+    // A destination hidden in the Modules menu is not forced open: the action still runs (e.g. a
+    // sample is loaded), the workspace stays as the user chose and the status bar says so.
+    lastShowBlocked_ = modules_ && !modules_->reachable(page);
+    if (lastShowBlocked_) {
+        statusBar()->showMessage(QString("\"%1\" is hidden in this workspace - Modules > Show All Modules (or tick it) to see it")
+                                     .arg(modules_->name(modules_->idOfWidget(page))), 8000);
+        return false;
+    }
     for (QWidget* w = page; w; w = w->parentWidget()) {
         QWidget* stack = w->parentWidget();
         if (auto* tw = stack ? qobject_cast<QTabWidget*>(stack->parentWidget()) : nullptr)
             if (tw->indexOf(w) >= 0) tw->setCurrentWidget(w);
         if (w == tabs_) break;
     }
+    return true;
 }
 
 // The module widget of tab i (unwrapping the PageScroll container).
@@ -237,8 +298,7 @@ QWidget* MainWindow::pageOf(int i) const {
 
 // Selects the Memory area and its "Page replacement" sub-tab (the original Memory tab).
 void MainWindow::showMemoryTab() {
-    showTab(memArea_);
-    memArea_->setCurrentWidget(mem_);
+    showTab(mem_);                       // selects Memory and its sub-tab (unless hidden in the workspace)
 }
 
 void MainWindow::buildMenus() {
@@ -290,6 +350,40 @@ void MainWindow::buildMenus() {
 
     QMenu* help = menuBar()->addMenu("&Help");
     help->addAction("About", this, &MainWindow::showAbout);
+
+    // Modules: workspace customisation (Module Visibility Manager). The tree is embedded through
+    // a QWidgetAction, so the menu stays open while several checkboxes are changed.
+    QMenu* mods = menuBar()->addMenu("&Modules");
+    modulesMenu_ = mods;
+    mods->setToolTipsVisible(true);
+    auto* treeAction = new QWidgetAction(mods);
+    menuTree_ = new ModuleTree(modules_, true);
+    treeAction->setDefaultWidget(menuTree_);
+    mods->addAction(treeAction);
+    mods->addSeparator();
+    QAction* all = mods->addAction("Show All Modules", modules_, &ModuleManager::showAll);
+    all->setToolTip("Show every main module and every child view");
+    QAction* only = mods->addAction("Show Current Module Only", modules_, [this] { modules_->showCurrentOnly(); });
+    only->setToolTip("Keep the selected main module, hide the others (child choices and simulations are kept)");
+    QAction* def = mods->addAction("Reset to Default", modules_, &ModuleManager::resetToDefaults);
+    def->setToolTip("Restore the default module visibility");
+    QMenu* presets = mods->addMenu("Workspace Presets");
+    presets->setToolTipsVisible(true);
+    connect(presets, &QMenu::aboutToShow, this, [this, presets] {
+        presets->clear();
+        for (const QString& n : modules_->builtinPresetNames())
+            presets->addAction(n, modules_, [this, n] { modules_->applyPreset(n); })->setToolTip(modules_->builtinPresetDescription(n));
+        QStringList custom = modules_->customPresetNames();
+        if (!custom.isEmpty()) presets->addSeparator();
+        for (const QString& n : custom) presets->addAction(n, modules_, [this, n] { modules_->applyPreset(n); })->setToolTip("Custom preset");
+        presets->addSeparator();
+        presets->addAction("Save, Rename or Delete Presets...", this, &MainWindow::openWorkspaceDialog);
+    });
+    mods->addSeparator();
+    QAction* manage = mods->addAction("Manage Workspace...", QKeySequence("Ctrl+Shift+M"), this, &MainWindow::openWorkspaceDialog);
+    manage->setToolTip("Searchable module tree, counters, bulk actions and workspace presets (Ctrl+Shift+M)");
+    manage->setShortcutContext(Qt::ApplicationShortcut);
+    connect(mods, &QMenu::aboutToShow, this, [this] { menuTree_->search()->clear(); menuTree_->refresh(); });
 }
 
 // Applies the theme, updates the switch button and saves the choice for the next start.
@@ -333,7 +427,8 @@ bool MainWindow::loadSample(const QString& path) {
         ui::info(this, "This sample is used by a tab that is not finished yet: " + name);
         return false;
     }
-    if (ok) statusBar()->showMessage("Loaded sample " + name, 5000);
+    if (ok && !lastShowBlocked_) statusBar()->showMessage("Loaded sample " + name, 5000);
+    if (ok && lastShowBlocked_) statusBar()->showMessage("Loaded sample " + name + " into a module that is hidden in this workspace (Modules menu)", 8000);
     return ok;
 }
 
@@ -604,9 +699,11 @@ QStringList MainWindow::layoutReport(const QList<QSize>& sizes, bool print) {
             }
         };
         for (int i = 0; i < tabs_->count(); ++i) {
+            if (!tabs_->isTabVisible(i)) continue;                        // hidden in the Modules menu
             tabs_->setCurrentIndex(i);
             if (auto* area = qobject_cast<QTabWidget*>(pageOf(i))) {      // sub-tab area: audit every child view
                 for (int k = 0; k < area->count(); ++k) {
+                    if (!area->isTabVisible(k)) continue;
                     area->setCurrentIndex(k);
                     check(area->widget(k), tabs_->tabText(i).replace("&&", "&") + " > " + area->tabText(k).replace("&&", "&"));
                 }
@@ -1511,6 +1608,9 @@ int MainWindow::runSelfTest() {
     QFile::remove(base + ".txt");
     QFile::remove(base + ".csv");
 
+    // Modules menu (Module Visibility Manager)
+    runWorkspaceSelfTest();
+
     // Leave work running on purpose: closing the window must stop the animations and the live
     // demo helper cleanly (checked from outside: no ossim_helper process may remain).
     if (NativeRunner::available()) proc_->startDemo("sleep");
@@ -1518,4 +1618,348 @@ int MainWindow::runSelfTest() {
     sync_->run();
     std::printf("[selftest] %s (%d failure(s))\n", g_stFail ? "FAILED" : "ALL PASSED", g_stFail);
     return g_stFail ? 1 : 0;
+}
+
+// ---------------------------------------------------------------- Modules menu self-test
+// Uses the real tab widgets: QTabWidget::isTabVisible, currentWidget, indexOf; simulation state is
+// checked on the real pages (playback position, playing / paused flags, results).
+int MainWindow::runWorkspaceSelfTest() {
+    int before = g_stFail;
+    ModuleManager* M = modules_;
+    const QStringList ids = M->ids();
+    // registry: every parent tab and every child view of the sub-tab areas is registered
+    int navigable = tabs_->count();
+    for (QTabWidget* a : std::initializer_list<QTabWidget*>{schedArea_, procArea_, memArea_, storage_}) navigable += a->count();
+    stCheck(ids.size() == navigable && ids.size() == 28, QString("modules: %1 registered entries = %2 navigable tabs").arg(ids.size()).arg(navigable));
+    stCheck(M->workspace().topLevel().size() == (size_t)tabs_->count(), "modules: one entry per main tab");
+    for (const char* id : {"scheduling.realtime", "processes.monitor", "memory.heap", "storage.recovery", "io", "disk"})
+        stCheck(M->page(id) != nullptr, QString("modules: stable id %1").arg(id));
+    stCheck(M->page("memory.heap") == memArea_->heapLab() && M->page("processes.monitor") == sysmon_ && M->page("scheduling.cpu") == sched_,
+            "modules: ids are bound to the real pages");
+    // the Modules menu comes right after Help and holds the tree, the quick actions and Manage Workspace
+    QStringList menus;
+    for (QAction* a : menuBar()->actions()) menus << a->text().remove('&');
+    stCheck(menus.join("|") == "File|View|Help|Modules", "modules: menu bar is File | View | Help | Modules (" + menus.join("|") + ")");
+    QStringList modActs;
+    std::function<void(QMenu*)> collect = [&](QMenu* m) { for (QAction* a : m->actions()) { if (!a->text().isEmpty()) modActs << a->text(); } };
+    collect(modulesMenu_);
+    for (const char* a : {"Show All Modules", "Show Current Module Only", "Reset to Default", "Workspace Presets", "Manage Workspace..."})
+        stCheck(modActs.contains(a), QString("modules: menu has \"%1\"").arg(a));
+    stCheck(menuTree_ && menuTree_->tree()->topLevelItemCount() == tabs_->count(), "modules: menu tree lists every main module");
+    int treeItems = 0;
+    for (QTreeWidgetItemIterator it(menuTree_->tree()); *it; ++it) ++treeItems;
+    stCheck(treeItems == ids.size(), "modules: menu tree lists every entry");
+    bool manageKey = false;
+    for (QAction* a : modulesMenu_->actions()) if (a->shortcut() == QKeySequence("Ctrl+Shift+M")) manageKey = true;
+    stCheck(manageKey, "modules: Manage Workspace has Ctrl+Shift+M");
+
+    // consistency: tab visibility == preference; the selected tab of every visible area is visible
+    auto consistent = [&]() {
+        for (const QString& id : ids) {
+            QTabWidget* a = M->area(id);
+            int i = a->indexOf(M->page(id));
+            if (i < 0 || a->isTabVisible(i) != M->isVisible(id)) return false;
+        }
+        for (QTabWidget* a : std::initializer_list<QTabWidget*>{tabs_, schedArea_, procArea_, memArea_, storage_}) {
+            QString id = M->idOfWidget(a);
+            if (a != tabs_ && !M->isEffective(id)) continue;
+            if (!a->isTabVisible(a->currentIndex())) return false;
+        }
+        return true;
+    };
+    // order: (area, index, text) per entry never changes
+    auto layoutOf = [&]() {
+        QStringList v;
+        for (const QString& id : ids) { QTabWidget* a = M->area(id); int i = a->indexOf(M->page(id)); v << QString("%1:%2:%3").arg(id).arg(i).arg(a->tabText(i)); }
+        return v;
+    };
+    const QStringList order0 = layoutOf();
+    QList<QWidget*> pages0;
+    for (const QString& id : ids) pages0 << M->page(id);
+    stCheck(consistent(), "modules: default workspace is consistent");
+
+    // 1 + 2: every parent and every child can be hidden and restored
+    bool allOk = true;
+    for (const QString& id : ids) {
+        QTabWidget* a = M->area(id);
+        int i = a->indexOf(M->page(id));
+        bool hid = M->setVisible(id, false) && !a->isTabVisible(i) && consistent();
+        bool back = M->setVisible(id, true) && a->isTabVisible(i) && consistent();
+        if (!hid || !back) { allOk = false; stCheck(false, "modules: hide / restore " + id); }
+    }
+    stCheck(allOk, QString("modules: all %1 entries hidden and restored one by one").arg(ids.size()));
+    // 3: original order
+    stCheck(layoutOf() == order0, "modules: navigation order unchanged after hide / restore");
+
+    // 4: child preferences survive the parent's visibility
+    M->setVisible("memory.heap", false);
+    M->setVisible("memory.swapping", false);
+    M->setVisible("memory", false);
+    stCheck(!tabs_->isTabVisible(tabs_->indexOf(M->page("memory"))) && !M->isEffective("memory.paging"), "modules: Memory hidden");
+    stCheck(M->setVisible("memory.thrashing", false), "modules: child changed while its parent is hidden");
+    M->setVisible("memory", true);
+    stCheck(!M->isVisible("memory.heap") && !M->isVisible("memory.swapping") && !M->isVisible("memory.thrashing") && M->isVisible("memory.paging")
+            && !memArea_->isTabVisible(memArea_->indexOf(memArea_->heapLab())) && memArea_->isTabVisible(memArea_->indexOf(mem_)) && consistent(),
+            "modules: restoring Memory keeps 5 of 8 children (hidden ones stay hidden)");
+    QTreeWidgetItem* memItem = menuTree_->itemFor("memory");
+    stCheck(memItem && memItem->text(1) == "5/8" && memItem->font(0).italic(), "modules: partially enabled parent shows 5/8 (italic)");
+    M->setVisible("memory", false);
+    QTreeWidgetItem* heapItem = menuTree_->itemFor("memory.heap");
+    stCheck(heapItem && heapItem->isDisabled() && heapItem->checkState(0) == Qt::Unchecked, "modules: children of a hidden parent are disabled, choice kept");
+    M->showAll();
+    stCheck(M->workspace().effectiveCount() == ids.size() && consistent(), "modules: Show All Modules restores everything");
+
+    // 5 + 6: simulation state survives; playing simulations are paused, never reset or resumed
+    disk_->loadPreset(0);
+    PlaybackBar* db = disk_->playback();
+    db->setPosition(3);
+    db->setIntervalMs(60);
+    db->run();
+    QApplication::processEvents();
+    stCheck(db->playing(), "modules: disk playback running");
+    M->setVisible("disk", false);
+    int dpos = db->position();
+    stCheck(!db->playing() && dpos >= 3, QString("modules: hiding Disk pauses its playback at step %1").arg(dpos));
+    waitFor([] { return false; }, 200);
+    M->setVisible("disk", true);
+    stCheck(!db->playing() && db->position() == dpos && db->length() > 0, "modules: shown again - same step, still paused (manual resume)");
+    db->togglePause();
+    stCheck(db->playing(), "modules: the user can resume after showing it");
+    db->stop();
+    // parent hidden: children are paused too (heap laboratory, real-time scheduling)
+    HeapLabPage* hl = memArea_->heapLab();
+    hl->loadPreset(0);
+    hl->playback()->setPosition(2);
+    hl->playback()->run();
+    rt_->loadPreset(0);
+    rt_->playback()->run();
+    sync_->run();
+    stCheck(hl->playback()->playing() && rt_->playback()->playing() && sync_->animating(), "modules: heap, real-time and sync playing");
+    M->setVisible("memory", false);
+    M->setVisible("scheduling", false);
+    M->setVisible("synchronization", false);
+    int hpos = hl->playback()->position(), rpos = rt_->playback()->position();
+    stCheck(!hl->playback()->playing() && !rt_->playback()->playing(), "modules: hiding a parent pauses its children's playback");
+    stCheck(!sync_->animating() && sync_->paused(), "modules: hiding Synchronization pauses its animation");
+    waitFor([] { return false; }, 150);
+    M->showAll();
+    stCheck(!hl->playback()->playing() && hl->playback()->position() == hpos && rt_->playback()->position() == rpos && !sync_->animating() && sync_->paused(),
+            "modules: restored pages keep their paused state and position");
+    stCheck(rt_->result().has_value(), "modules: real-time result kept");
+    hl->playback()->stop();
+    rt_->playback()->stop();
+    sync_->stop();
+    // the threaded engine replay (Scheduling > CPU Scheduling)
+    bool engineDone = false;
+    auto ec = connect(sched_, &SchedulingTab::animationFinished, this, [&] { engineDone = true; });
+    showTab(sched_);
+    stCheck(sched_->runAnimated(200), "modules: engine replay started");
+    M->setVisible("scheduling", false);
+    stCheck(sched_->animationRunning() && sched_->animationPaused(), "modules: hiding Scheduling pauses the engine replay (threads wait)");
+    M->setVisible("scheduling", true);
+    stCheck(sched_->animationPaused() && !engineDone, "modules: replay still paused after showing it");
+    sched_->stopAnimation();
+    waitFor([&] { return !sched_->animationRunning(); }, 3000);
+    disconnect(ec);
+    stCheck(!sched_->animationRunning(), "modules: engine stopped cleanly (no orphan threads)");
+    // System Monitor stops sampling while its page is hidden
+    showTab(sysmon_);
+    QApplication::processEvents();
+    M->setVisible("processes.monitor", false);
+    QApplication::processEvents();
+    auto* smTimer = sysmon_->findChild<QTimer*>();
+    bool smIdle = true;
+    for (QTimer* t : sysmon_->findChildren<QTimer*>()) if (t->isActive() && t->interval() >= 250) smIdle = false;
+    stCheck(smTimer && smIdle, "modules: System Monitor sampling stops while hidden");
+    M->setVisible("processes.monitor", true);
+
+    // 7: the selection moves to the nearest visible module
+    showTab(memArea_->heapLab());
+    M->setVisible("memory.heap", false);
+    stCheck(memArea_->currentWidget() == M->page("memory.thrashing") && consistent(), "modules: hidden current sub-tab -> nearest visible sibling (Thrashing)");
+    showTab(M->page("memory.paging"));
+    M->setVisible("memory", false);
+    stCheck(tabs_->currentWidget() == M->page("deadlock") && consistent(), "modules: hidden current main tab -> next visible (Deadlock)");
+    M->setVisible("storage", false);
+    showTab(disk_);
+    M->setVisible("disk", false);
+    stCheck(tabs_->currentWidget() == M->page("io"), "modules: last tab hidden -> previous visible (I/O)");
+    M->showAll();
+    stCheck(memArea_->currentWidget() == M->page("memory.paging"), "modules: restoring Memory keeps its last visible sub-tab");
+    // keyboard navigation (Ctrl+Tab) skips hidden tabs
+    M->setVisible("processes", false);
+    tabs_->setCurrentIndex(0);
+    QKeyEvent ct(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier);
+    QApplication::sendEvent(tabs_, &ct);
+    stCheck(tabs_->currentWidget() == M->page("memory"), "modules: Ctrl+Tab skips the hidden Processes tab");
+    M->setVisible("scheduling.mlq", false);
+    schedArea_->setCurrentWidget(sched_);
+    QKeyEvent ct2(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier);
+    QApplication::sendEvent(schedArea_, &ct2);
+    stCheck(schedArea_->currentWidget() == rt_, "modules: Ctrl+Tab in a sub-tab area skips hidden children");
+    // menu actions with a hidden destination: the sample loads, the workspace is not changed
+    M->setVisible("deadlock", false);
+    showTab(io_);
+    bool loaded = loadSample(ui::samplesDir() + "/banker_sample.txt");
+    stCheck(loaded && tabs_->currentWidget() == M->page("io") && !M->isVisible("deadlock") && consistent(),
+            "modules: File > Load sample into a hidden module keeps the workspace (status bar explains)");
+    M->showAll();
+    showTab(dead_);
+    stCheck(tabs_->currentWidget() == M->page("deadlock"), "modules: navigation works again once shown");
+
+    // 8: the last main module and the last child cannot be hidden
+    showTab(io_);
+    stCheck(M->showCurrentOnly() && M->workspace().effectiveCount() == 1 && M->isVisible("io"), "modules: Show Current Module Only keeps I/O");
+    QString why;
+    stCheck(!M->setVisible("io", false, &why) && M->isVisible("io") && why.contains("At least one"), "modules: the last main module cannot be hidden");
+    stCheck(!menuTree_->clickCheck("io") && menuTree_->lastMessage().contains("At least one") && menuTree_->itemFor("io")->checkState(0) == Qt::Checked,
+            "modules: menu checkbox refuses it and explains");
+    M->showAll();
+    for (const char* c : {"storage.explorer", "storage.access", "storage.blocks"}) M->setVisible(c, false);
+    stCheck(!M->setVisible("storage.recovery", false, &why) && why.contains("last visible"), "modules: the last visible child cannot be hidden");
+    // menu tree clicks work like the model
+    stCheck(menuTree_->clickCheck("storage.access") && M->isVisible("storage.access") && storage_->isTabVisible(1), "modules: menu checkbox shows a child");
+    stCheck(menuTree_->clickCheck("threads") && !M->isVisible("threads") && !tabs_->isTabVisible(tabs_->indexOf(M->page("threads"))), "modules: menu checkbox hides a main module");
+    // 9 + 10: show all, reset to default
+    M->showAll();
+    stCheck(consistent() && M->workspace().effectiveCount() == ids.size(), "modules: Show All Modules");
+    M->setVisible("ipc", false);
+    M->resetToDefaults();
+    stCheck(consistent() && M->workspace().effectiveCount() == ids.size(), "modules: Reset to Default (all modules are visible by default)");
+
+    // 11: presets (visibility only) - also while a simulation is playing
+    db->setPosition(1);
+    db->run();
+    stCheck(M->applyPreset("CPU & Process Management"), "modules: apply CPU & Process Management");
+    stCheck(M->isEffective("scheduling.realtime") && M->isEffective("processes.jobs") && M->isEffective("threads") && !M->isEffective("memory") && !M->isEffective("disk") && consistent(),
+            "modules: preset shows Scheduling, Processes, Threads only");
+    stCheck(!db->playing() && db->position() >= 1, "modules: preset during playback pauses the hidden Disk simulation");
+    M->applyPreset("Memory & Storage");
+    stCheck(M->isEffective("memory.heap") && M->isEffective("storage.recovery") && M->isEffective("disk") && !M->isEffective("scheduling") && consistent(), "modules: Memory & Storage preset");
+    M->applyPreset("Synchronization & Deadlocks");
+    stCheck(M->isEffective("synchronization") && M->isEffective("deadlock") && M->isEffective("ipc") && M->isEffective("threads") && !M->isEffective("memory") && consistent(), "modules: Synchronization & Deadlocks preset");
+    M->applyPreset("Linux Practical Lab");
+    stCheck(M->isEffective("processes.monitor") && M->isEffective("processes.jobs") && M->isEffective("ipc") && M->isEffective("storage.explorer") && !M->isVisible("storage.recovery") && !M->isEffective("disk") && consistent(),
+            "modules: Linux Practical Lab preset");
+    db->stop();
+    stCheck(disk_->playback()->length() > 0, "modules: presets did not reset simulation data");
+    // custom presets: save, rename, load, delete
+    M->showAll();
+    M->setVisible("memory.heap", false);
+    M->setVisible("ipc", false);
+    stCheck(M->saveCustomPreset("Lecture 1"), "modules: save custom preset");
+    stCheck(!M->saveCustomPreset("Complete OS-Sim", &why) && !M->saveCustomPreset("   ", &why), "modules: built-in / empty preset names refused");
+    stCheck(M->renameCustomPreset("Lecture 1", "Lecture A") && M->customPresetNames() == QStringList{"Lecture A"}, "modules: rename custom preset");
+    M->showAll();
+    stCheck(M->applyPreset("Lecture A") && !M->isVisible("memory.heap") && !M->isVisible("ipc") && M->isVisible("disk") && consistent(), "modules: load custom preset");
+    stCheck(M->deleteCustomPreset("Lecture A") && M->customPresetNames().isEmpty(), "modules: delete custom preset");
+
+    // 12 + 13: persistence (a separate settings store; the user's settings are not touched)
+    {
+        QSettings st("OS-Sim-selftest", "OS-Sim");
+        st.clear();
+        st.setValue("layout/other", 7);
+        M->showAll();
+        M->setVisible("processes", false);
+        M->setVisible("processes.monitor", false);
+        M->setVisible("scheduling.realtime", false);
+        M->saveCustomPreset("Viva");
+        M->save(st);
+        VisibilityMap saved = M->workspace().snapshot();
+        M->showAll();
+        M->deleteCustomPreset("Viva");
+        M->load(st);
+        stCheck(M->workspace().snapshot() == saved && M->customPresetNames() == QStringList{"Viva"} && consistent() && M->loadWarnings().isEmpty(),
+                "modules: saved workspace and custom preset restored");
+        stCheck(st.value("layout/other").toInt() == 7, "modules: other settings preserved");
+        // invalid / outdated settings fall back safely
+        st.setValue("modules/v1/visible/memory", "banana");
+        st.setValue("modules/v1/visible/gone.module", false);
+        st.setValue("modules/v1/visible/scheduling", false);
+        st.setValue("modules/v1/visible/processes", false);
+        for (const char* t : {"memory", "deadlock", "synchronization", "threads", "ipc", "io", "disk", "storage"})
+            if (QString(t) != "memory") st.setValue(QString("modules/v1/visible/%1").arg(t), false);
+        M->load(st);
+        stCheck(M->isVisible("memory") && M->workspace().effectiveCount() >= 2 && consistent() && !M->loadWarnings().isEmpty(), "modules: corrupted settings -> safe defaults");
+        st.setValue("modules/version", 42);
+        M->load(st);
+        stCheck(M->workspace().effectiveCount() == ids.size() && M->loadWarnings().join(" ").contains("not supported"), "modules: unsupported settings version -> defaults");
+        st.clear();
+        M->load(st);
+        stCheck(M->workspace().effectiveCount() == ids.size() && M->loadWarnings().isEmpty(), "modules: empty settings -> defaults");
+        stCheck(M->store().isEmpty(), "modules: the self-test never writes the user's settings");
+    }
+
+    // 14: repeated toggling never duplicates widgets or connections
+    mlq_->loadPreset(0);
+    int logBefore = log_->blockCount();
+    mlq_->loadPreset(1);
+    int perLoad = log_->blockCount() - logBefore;
+    for (int k = 0; k < 40; ++k) {
+        M->setVisible(k % 2 ? "scheduling" : "scheduling.mlq", false);
+        M->setVisible(k % 2 ? "scheduling" : "scheduling.mlq", true);
+        M->applyPreset(k % 3 ? "Memory & Storage" : "Complete OS-Sim");
+    }
+    M->showAll();
+    logBefore = log_->blockCount();
+    mlq_->loadPreset(2);
+    stCheck(log_->blockCount() - logBefore == perLoad, QString("modules: one log line set per action after 40 toggles (%1)").arg(perLoad));
+    int countNow = tabs_->count();
+    for (QTabWidget* a : std::initializer_list<QTabWidget*>{schedArea_, procArea_, memArea_, storage_}) countNow += a->count();
+    QList<QWidget*> pagesNow;
+    for (const QString& id : ids) pagesNow << M->page(id);
+    stCheck(countNow == navigable && pagesNow == pages0 && layoutOf() == order0, "modules: no tab or page duplicated, same widgets, same order");
+    int items = 0;
+    for (QTreeWidgetItemIterator it(menuTree_->tree()); *it; ++it) ++items;
+    stCheck(items == ids.size(), "modules: menu tree not duplicated");
+
+    // Manage Workspace dialog: searchable tree, counters, presets
+    openWorkspaceDialog();
+    QApplication::processEvents();
+    stCheck(wsDialog_ && wsDialog_->isVisible() && !wsDialog_->isModal(), "modules: Manage Workspace dialog opens (non-modal)");
+    ModuleTree* dt = wsDialog_->moduleTree();
+    dt->setFilter("heap");
+    int shownItems = 0;
+    for (QTreeWidgetItemIterator it(dt->tree()); *it; ++it) if (!(*it)->isHidden()) ++shownItems;
+    stCheck(shownItems == 2 && !dt->itemFor("memory.heap")->isHidden(), "modules: search 'heap' lists Memory > Heap Laboratory");
+    dt->setFilter("");
+    stCheck(dt->clickCheck("memory.heap") && !M->isVisible("memory.heap") && menuTree_->itemFor("memory.heap")->checkState(0) == Qt::Unchecked,
+            "modules: dialog change applies immediately (menu tree follows)");
+    stCheck(wsDialog_->presetList()->count() == 5 + (int)M->customPresetNames().size(), "modules: dialog lists the built-in and custom presets");
+    M->setVisible("ipc", false);
+    M->setVisible("storage.blocks", false);
+    menuTree_->expandAll();
+    dt->expandAll();
+    stCheck(menuTree_->tree()->topLevelItem(2)->isExpanded(), "modules: Expand All");
+    shot(wsDialog_, "workspace_dialog");
+    // screenshots: menu open, customised workspace
+    showTab(M->page("memory.paging"));
+    modulesMenu_->popup(mapToGlobal(QPoint(menuBar()->actionGeometry(modulesMenu_->menuAction()).left(), menuBar()->height())));
+    QApplication::processEvents();
+    stCheck(modulesMenu_->isVisible() && modulesMenu_->sizeHint().height() <= 760, QString("modules: menu fits a 768-pixel screen (%1 px)").arg(modulesMenu_->sizeHint().height()));
+    shot(modulesMenu_, "modules_menu");
+    modulesMenu_->hide();
+    menuTree_->collapseAll();
+    stCheck(!menuTree_->tree()->topLevelItem(2)->isExpanded(), "modules: Collapse All");
+    wsDialog_->close();
+    shot(this, "workspace_customised");
+
+    // 15 + 16: themes and the responsive layout with hidden modules
+    setDarkTheme(true);
+    M->setVisible("ipc", true);
+    showTab(ipc_);
+    stCheck(ui::darkTheme() && consistent(), "modules: dark theme with hidden modules");
+    shot(this, "workspace_dark");
+    openWorkspaceDialog();
+    shot(wsDialog_, "workspace_dialog_dark");
+    wsDialog_->close();
+    setDarkTheme(false);
+    QStringList lp = layoutReport({QSize(1366, 768), QSize(1024, 768)}, false);
+    stCheck(lp.isEmpty(), QString("modules: layout report with hidden modules - %1 problem(s)").arg(lp.size()));
+    M->resetToDefaults();
+    lp = layoutReport({QSize(1366, 768)}, false);
+    stCheck(lp.isEmpty() && consistent(), QString("modules: layout report after Reset to Default - %1 problem(s)").arg(lp.size()));
+    resize(1280, 800);
+    std::printf("[selftest] modules section: %d failure(s)\n", g_stFail - before);
+    return g_stFail - before;
 }

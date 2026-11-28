@@ -29,6 +29,9 @@ public:
     bool compareAll();
     void stopAnimation();
     bool animationRunning() const;
+    // Pauses a running animated replay (no-op otherwise); resume with the Resume button.
+    void pauseAnimation();
+    bool animationPaused() const { return paused_; }
     // Integrated run (scheduling + paging + resources); avoidance = Banker's on/off.
     bool runIntegrated();
     void setIntegratedOptions(const QString& requestsFile, bool avoidance, bool autoRecover, int frames, int k);

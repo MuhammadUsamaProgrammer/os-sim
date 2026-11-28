@@ -31,11 +31,17 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     SysMonTab.h SysMonTab.cpp
     JobControlTab.h JobControlTab.cpp
     RtSchedTab.h RtSchedTab.cpp
-    MlqTab.h MlqTab.cpp)
+    MlqTab.h MlqTab.cpp
+    ModuleManager.h ModuleManager.cpp
+    WorkspaceUi.h WorkspaceUi.cpp)
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                              OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")
   add_dependencies(ossim ossim_helper)
+  # Modules menu: workspace persistence across real restarts (private XDG_CONFIG_HOME)
+  add_test(NAME gui_workspace_restart
+           COMMAND ${CMAKE_COMMAND} -DOSSIM=$<TARGET_FILE:ossim> -DCFG=${CMAKE_BINARY_DIR}/workspace-test-config
+                   -P ${CMAKE_SOURCE_DIR}/tests/workspace_restart.cmake)
 else()
   message(WARNING "Qt6 Widgets not found: GUI (ossim) will not be built. "
                   "Install with: sudo apt install qt6-base-dev")

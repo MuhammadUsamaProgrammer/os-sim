@@ -479,6 +479,18 @@ virtual filesystem never touches the host disk except an explicitly chosen image
 `#ifdef _WIN32` and is unverified until run on Windows. Tests: `test_vfs`, `test_heap`, `test_sysmon`, `test_jobctl`,
 `test_rtsched`, `test_mlq`, `test_sync_classic`, `test_native`, and the GUI `--selftest` Phase 3 sections.
 
+## 15. Module Visibility Manager (implemented)
+
+Documentation: `docs/WORKSPACE.md`. Files: `core/workspace.*` (pure model: preference vs effective visibility, rules,
+presets, text form), `gui/ModuleManager.*` (registry bound to the QTabWidgets, lifecycle, QSettings `modules/`),
+`gui/WorkspaceUi.*` (menu tree via QWidgetAction, Manage Workspace dialog), Modules menu in `MainWindow`.
+Rules: register every new navigable tab in `MainWindow::registerModules()` with a stable id; never remove / re-create
+pages to hide them (use the manager); hiding pauses playback (PlaybackBar::pause or a pause hook) and never resets or
+auto-resumes; the last main module / last visible child cannot be hidden; `showTab()` never forces a hidden module
+open; self-test and `--layout-report` use the default workspace and never write user settings.
+Tests: `test_workspace`, ctest `gui_workspace_restart` (`--workspace-set` / `--workspace-report`), `--selftest`
+"modules" section.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.
@@ -493,6 +505,8 @@ virtual filesystem never touches the host disk except an explicitly chosen image
 - [ ] Phase 2: all six modules work from real models, the 7 Phase 2 test programs and the GUI selftest pass.
 - [ ] Phase 3: the six new capabilities and the confirmed gaps work as integrated child views, the 7 Phase 3 test
       programs, `test_native` and the GUI selftest pass, `--layout-report` shows 0 problems.
+- [ ] Modules menu: every parent tab and sub-tab can be hidden / restored without losing state, settings persist,
+      `test_workspace`, `gui_workspace_restart` and the selftest "modules" section pass.
 
 ---
 

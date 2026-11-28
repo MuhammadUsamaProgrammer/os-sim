@@ -128,6 +128,10 @@ void PlaybackBar::run() {
     updateUi();
 }
 
+void PlaybackBar::pause() {
+    if (timer_->isActive()) togglePause();
+}
+
 void PlaybackBar::togglePause() {
     if (timer_->isActive()) { timer_->stop(); paused_ = true; }
     else if (paused_ && pos_ < length_) { paused_ = false; timer_->start(); }

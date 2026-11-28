@@ -344,6 +344,25 @@ Done together because the Recovery Lab works on the same model (dependency, not 
 - Windows: NOT verified (no Windows machine); the Windows System Monitor backend is compiled only on WIN32.
 - Regression: Phase 2 tests and self-test sections and the responsive-layout checks pass unchanged.
 
+## Module Visibility Manager (Modules menu; details: docs/WORKSPACE.md)
+Status: done. Baseline before the change (commit f1adcfb): 0 warnings, ctest 21/21, `--selftest` ALL PASSED.
+- `core/workspace.*`: pure model (stable ids, preference vs effective visibility, never-empty rules, bulk actions,
+  built-in presets, tolerant `id=1,id=0` text form). `tests/test_workspace.cpp`: 70 checks.
+- `gui/ModuleManager.*`: registry of 28 entries (10 main tabs + 18 sub-tabs of Scheduling, Processes, Memory,
+  Storage & Files) bound to the real QTabWidgets with `setTabVisible`; pages are never re-created. Hiding pauses
+  PlaybackBars, the Scheduling engine replay and the Sync animation (never resets / auto-resumes); System Monitor
+  stops sampling via hideEvent. QSettings `modules/` (versioned; bad / old / unknown values -> defaults).
+- `gui/WorkspaceUi.*`: menu tree (QWidgetAction, the menu stays open), Manage Workspace dialog (Ctrl+Shift+M) with
+  search, counters, quick actions, built-in and custom presets (save / rename / delete).
+- Menu bar: File | View | Help | Modules. `showTab()` never forces a hidden module open (status bar explains).
+- Run: `./gui/ossim` -> Modules. Restart check: `--workspace-set "memory.heap=0"` then `--workspace-report`.
+
+### Verification (Linux, offscreen Qt)
+- Clean build `make -j2`: 0 warnings. `ctest`: 23/23 (new: test_workspace 70 checks, gui_workspace_restart).
+- `--selftest`: 523 checks ALL PASSED (435 earlier checks unchanged + 88 in the new "modules" section).
+- `--layout-report 1024x768,...,2560x1440`: 0 problems; the self-test also runs it with hidden modules (0 problems).
+- ASan/UBSan: see the commit message of this stage. Windows / macOS: not verified.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.

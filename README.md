@@ -102,7 +102,7 @@ demo and the tests still build.
 ```bash
 mkdir -p build && cd build
 cmake .. && make -j2          # use make -j1 if the VM runs out of memory
-ctest --output-on-failure     # 21 test programs, all must pass
+ctest --output-on-failure     # 22 test programs + the workspace restart test, all must pass
 ./gui/ossim                   # the GUI
 QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest   # automatic GUI smoke test, exit code 0
 ```
@@ -151,7 +151,8 @@ os-sim/
 │   ├── sysmon.*         Phase 3: /proc parsers, CPU / rate deltas, alerts, bounded history
 │   ├── jobctl.*         Phase 3: job-control shell model (reuses the IPC pipe)
 │   ├── rtsched.*        Phase 3: RM / EDF real-time scheduling
-│   └── mlq.*            Phase 3: multilevel queue / feedback queue scheduling
+│   ├── mlq.*            Phase 3: multilevel queue / feedback queue scheduling
+│   ├── workspace.*      Modules menu model: module visibility rules and presets (not an OS algorithm)
 │   └── io_formats.*     sample file loaders/savers
 ├── engine/            pthreads + semaphores + mutex + condvar + pipe (library osengine)
 │   ├── engine.*         SimulationEngine, realProcessDemo (fork/exec/wait)
@@ -160,10 +161,11 @@ os-sim/
 │   └── sysmon_native.*  Phase 3: System Monitor backends (Linux /proc, Windows API)
 ├── apps/console_main.cpp   console demo (ossim_console)
 ├── apps/ossim_helper.cpp   Live Linux demo helper (single-threaded, launched with QProcess)
-├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab
+├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab;
+│                      ModuleManager + WorkspaceUi = Modules menu (docs/WORKSPACE.md)
 ├── tests/             one test program per module, registered with ctest
 ├── samples/           process CSVs, reference strings, Banker/deadlock matrices, scripted requests
-└── docs/              REPORT.md, VIVA_NOTES.md, screenshots/
+└── docs/              REPORT.md, VIVA_NOTES.md, PHASE2/3_MODULES.md, WORKSPACE.md, screenshots/
 ```
 
 ## User guide
@@ -217,6 +219,15 @@ on the right, the playback bar and pages (log, timeline, comparison, Live Linux 
 press **Run** (or **Next** step by step, **Prev** to go back), change inputs to rebuild. Live demos: open the
 *Live Linux demo* page, pick a demo and press **Start live demo** (Stop cancels it safely). A recommended viva
 demonstration order is in `docs/PHASE2_MODULES.md`.
+
+### Modules menu (workspace customisation)
+The **Modules** menu (after Help) shows or hides any main module or child view, for example to keep only the topics
+of today's lecture. Tick or untick entries in the tree; the menu stays open. Parents show how many children are
+visible. Quick actions: Show All Modules, Show Current Module Only, Reset to Default, Workspace Presets (Complete
+OS-Sim, CPU & Process Management, Memory & Storage, Synchronization & Deadlocks, Linux Practical Lab, plus your own).
+**Manage Workspace...** (Ctrl+Shift+M) opens a searchable dialog where you can save, rename and delete presets.
+Hidden modules keep all their data; a running simulation is paused when hidden and resumed by you. The workspace is
+remembered between runs. Details: `docs/WORKSPACE.md`.
 
 ### Phase 3 views
 - **Storage & Files:** the four pages share one virtual disk. *Virtual disk* box: geometry and strategy, New virtual disk,
