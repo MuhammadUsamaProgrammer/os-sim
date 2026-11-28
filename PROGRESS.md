@@ -361,7 +361,8 @@ Status: done. Baseline before the change (commit f1adcfb): 0 warnings, ctest 21/
 - Clean build `make -j2`: 0 warnings. `ctest`: 23/23 (new: test_workspace 70 checks, gui_workspace_restart).
 - `--selftest`: 523 checks ALL PASSED (435 earlier checks unchanged + 88 in the new "modules" section).
 - `--layout-report 1024x768,...,2560x1440`: 0 problems; the self-test also runs it with hidden modules (0 problems).
-- ASan/UBSan: see the commit message of this stage. Windows / macOS: not verified.
+- `-DSANITIZE=address` (address + undefined): 0 warnings, ctest 23/23 and the whole `--selftest` (incl. "modules")
+  pass with no sanitizer report. Windows / macOS: not verified.
 
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
