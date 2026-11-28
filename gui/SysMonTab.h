@@ -69,6 +69,8 @@ public:
     int visibleRows() const;
     // ---- owned demo worker
     bool startWorker(int seconds, int mib, int busyPercent);
+    // Fills the demo worker and alert inputs only (nothing is started; used by samples).
+    void applyDemoConfig(int seconds, int mib, int busyPercent, int cpuThreshold, int memThreshold, int debounce);
     bool suspendWorker();
     bool resumeWorker();
     bool stopWorker();                        // cooperative (SIGTERM)

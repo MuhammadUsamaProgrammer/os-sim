@@ -47,7 +47,7 @@ binary and counting semaphores, producer-consumer, monitors with condition varia
 | Process management | `PCB` struct (pid, arrival, burst, remaining, priority, pages, state, times); states New → Ready → Running → Waiting → Terminated; `fork()/exec()/wait()` in an optional real-process demo |
 | Threads | One `pthread_create` per simulated process plus one clock thread; `pthread_join` at shutdown |
 | Synchronization | `pthread_mutex_lock/unlock` on ready queue and shared state; POSIX semaphores `sem_init/sem_wait/sem_post` to step processes; `pthread_cond_*` for the clock tick and pause/resume |
-| CPU scheduling | FCFS, SJF, SRTF, Round Robin (quantum), Priority (preemptive and non-preemptive) |
+| CPU scheduling | FCFS, SJF, SRTF, LJF, LRTF, Round Robin (quantum), Priority (preemptive and non-preemptive) |
 | Memory management | Paging, page tables, frame allocation, FIFO/LRU/Optimal |
 | Deadlocks | Banker's safety and request algorithms, detection, recovery by termination |
 | IPC | `pipe()` used by worker threads to send log lines to the logger/GUI |
@@ -491,6 +491,23 @@ open; self-test and `--layout-report` use the default workspace and never write 
 Tests: `test_workspace`, ctest `gui_workspace_restart` (`--workspace-set` / `--workspace-report`), `--selftest`
 "modules" section.
 
+## 16. LJF / LRTF and the Load Sample system (implemented)
+
+CPU scheduling: `Algo::LJF` (non-preemptive, longest burst) and `Algo::LRTF` (preemptive, longest remaining time;
+preempts only for a STRICTLY longer remaining time, the running process keeps the CPU on a tie; free CPU: earlier
+arrival, then lower pid) are appended to the enum (old values unchanged) and run through the same `schedulerPick()`.
+`allAlgos()` = FCFS, SJF, SRTF, LJF, LRTF, RR, Priority (NP), Priority (P); `runAll()` returns eight results. Never cast a
+combo index to `Algo` (store the enum as item data). Test: `test_ljf_lrtf` (hand-derived). Samples:
+`processes_ljf_lrtf.csv`, `processes_ljf_ties.csv`, `processes_ljf_starvation.csv`, `processes_idle_gap.csv`.
+
+Samples: documentation `docs/SAMPLES.md`. Files: `gui/SampleRegistry.*` (SampleDef, registry, dialog, `ui::samplesDir()`
+with the embedded `:/samples` fallback), `gui/SampleCatalog.cpp` (adapters, guard, File menu, self-test section),
+`SampleButton` + `withSampleSlot` in `gui/ModuleKit.*`. Rules: every new module page gets samples registered in
+`registerSamples()` with its ModuleManager id and a sample slot (automatic with `assembleModule`); loaders call the
+module's existing loaders (no duplicated workloads), only fill inputs (never run, never start native demos) and clear
+stale results; keep `File > Load sample`; no absolute sample paths. Tests: `--selftest` "samples" section, ctest
+`gui_samples_anywhere`, `--sample-report --load-all`.
+
 ## 8. Definition of done
 
 - [ ] `rm -rf build && mkdir build && cd build && cmake .. && make -j2 && ctest --output-on-failure` passes with **zero warnings** (`-Wall -Wextra`) and all tests green.
@@ -507,6 +524,9 @@ Tests: `test_workspace`, ctest `gui_workspace_restart` (`--workspace-set` / `--w
       programs, `test_native` and the GUI selftest pass, `--layout-report` shows 0 problems.
 - [ ] Modules menu: every parent tab and sub-tab can be hidden / restored without losing state, settings persist,
       `test_workspace`, `gui_workspace_restart` and the selftest "modules" section pass.
+- [ ] LJF / LRTF: `test_ljf_lrtf` passes; both appear in every algorithm list, Compare all (8), the engine replay,
+      the integrated run and the process lifecycle.
+- [ ] Load Sample: every module page has the button; `--selftest` "samples" section and `gui_samples_anywhere` pass.
 
 ---
 

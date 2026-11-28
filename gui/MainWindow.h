@@ -3,7 +3,7 @@
 #include <QMainWindow>
 
 class QTabWidget; class QPlainTextEdit; class QAction; class QToolButton; class QDockWidget; class PanelSplitter;
-class ModuleManager; class ModuleTree; class WorkspaceDialog; class QMenu;
+class ModuleManager; class ModuleTree; class WorkspaceDialog; class QMenu; class SampleRegistry; struct SampleDef;
 class SchedulingTab; class MemoryTab; class DeadlockTab; class SyncTab; class DiskTab; class ProcessTab; class IoTab; class MemAdvArea; class IpcTab; class ThreadsTab; class StorageArea; class SystemMonitorPage; class JobControlPage; class RtSchedPage; class MlqPage;
 
 class MainWindow : public QMainWindow {
@@ -36,6 +36,15 @@ public:
     WorkspaceDialog* workspaceDialog() const { return wsDialog_; }
     // QSettings organisation for the workspace (empty = defaults, nothing saved); set before construction.
     static QString& workspaceStore();
+    // ---- built-in samples (gui/SampleCatalog.cpp, see SampleRegistry.h)
+    SampleRegistry* samples() const { return samples_; }
+    QStringList sampleModules() const;               // leaf modules (each has a Load Sample button)
+    QString sampleReport() const;                    // module -> category -> sample inventory
+    int loadAllSamples(bool print);                  // returns the number of failures
+    // File > Load Built-in Sample: load through the registry and navigate (asks to reveal a hidden module)
+    bool loadSampleFromMenu(const QString& id);
+    // File > Open File...: imports an external file (kind = importer name, "" = by file name / ask)
+    bool importFile(const QString& path, const QString& kind = QString());
 
 public slots:
     void appendLog(const QString& line);
@@ -75,6 +84,15 @@ private:
     ModuleTree* menuTree_ = nullptr;
     WorkspaceDialog* wsDialog_ = nullptr;
     int runWorkspaceSelfTest();          // Modules menu section of --selftest (returns failures)
+    void registerSamples();
+    void installSampleButtons();
+    bool sampleGuard(const SampleDef& d);
+    bool revealModule(const QString& id, bool ask);
+    void fillBuiltinSampleMenu(QMenu* menu);
+    void openFileDialog();
+    int runSampleSelfTest();             // "samples" section of --selftest (returns failures)
+    void sampleScreenshots();            // OSSIM_SHOTS: Load Sample / LJF / LRTF screenshots
+    SampleRegistry* samples_ = nullptr;
     QWidget* pageOf(int i) const;
     QPlainTextEdit* log_;
     QAction* darkAction_ = nullptr;     // View > Dark theme (checkable)

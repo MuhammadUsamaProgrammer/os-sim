@@ -100,7 +100,7 @@ DiskControls::DiskControls(StorageArea* area, QWidget* parent) : QWidget(parent)
     for (AllocStrategy s : {AllocStrategy::Contiguous, AllocStrategy::Linked, AllocStrategy::Indexed}) strategy_->addItem(allocStrategyName(s));
     strategy_->setToolTip("The allocation strategy is fixed per virtual disk: changing it needs a new disk (existing files are never reinterpreted)");
     auto* mk = button("New virtual disk", "Creates an empty in-memory disk with this geometry and strategy");
-    auto* sample = button("Load sample", "New disk with users' home directories, a shared group directory, links and signature files");
+    auto* sample = button("Sample disk", "New disk with users' home directories, a shared group directory, links and signature files");
     auto* save = button("Save image...", "Writes the virtual disk to a versioned text image (only to a file you choose)");
     auto* load = button("Load image...", "Reads a saved image; size, structure, indices and paths are validated first");
     summary_ = new QLabel;
@@ -504,6 +504,11 @@ void ExplorerPage::setCwd(const QString& dir) {
     refresh();
 }
 
+void ExplorerPage::prefill(const QString& path, const QString& dest) {
+    path_->setText(path);
+    dest_->setText(dest);
+}
+
 void ExplorerPage::select(const QString& path) {
     selected_ = path;
     path_->setText(path);
@@ -683,8 +688,7 @@ AccessPage::AccessPage(StorageArea* area) : area_(area) {
     auto* bChown = button("chown", "Only root may change the owner (Linux rule)");
     auto* bChgrp = button("chgrp", "The owner may choose one of their own groups; root any group");
     preset_ = new QComboBox;
-    preset_->addItems({"Private file (600)", "Shared-group file (660, group staff)", "Public readable file (644)", "Private directory (700)",
-                       "Group directory (770, group staff)", "Traverse-only directory (711)", "List-only directory (744)"});
+    preset_->addItems(presetNames());
     auto* bPreset = button("Apply preset");
     auto* cfgW = new QWidget;
     auto* cf = new QFormLayout(cfgW);
@@ -786,6 +790,11 @@ bool AccessPage::applyMode(const QString& text) {
     header_->setStatus(q(c.message), c.ok() ? ui::hitColor().darker(130) : ui::semError());
     area_->report(c, "chmod " + path());
     return c.ok();
+}
+
+QStringList AccessPage::presetNames() {
+    return {"Private file (600)", "Shared-group file (660, group staff)", "Public readable file (644)", "Private directory (700)",
+            "Group directory (770, group staff)", "Traverse-only directory (711)", "List-only directory (744)"};
 }
 
 bool AccessPage::applyPreset(int i) {

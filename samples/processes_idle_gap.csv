@@ -1,0 +1,6 @@
+# CPU idle interval: nobody is ready between t=2 and t=5 (every algorithm shows an idle block).
+# FCFS / LJF / LRTF: P1 0-2, idle 2-5, P2 5-8, P3 8-9 ...
+pid,arrival,burst,priority,pages
+1,0,2,1,2
+2,5,3,2,2
+3,6,1,1,2

@@ -1,0 +1,10 @@
+# LJF / LRTF demo (same input as the SRTF example, so the "longest" and "shortest"
+# families can be compared directly).
+# LJF  (non-preemptive): P1 0-8, P3 8-17, P4 17-22, P2 22-26  -> avg WT 10.25
+# LRTF (preemptive)    : many switches, every process finishes near the end -> avg WT 16.5
+# SRTF on the same file: avg WT 6.5, SJF: avg WT 7.75
+pid,arrival,burst,priority,pages
+1,0,8,2,4
+2,1,4,1,3
+3,2,9,4,5
+4,3,5,3,3

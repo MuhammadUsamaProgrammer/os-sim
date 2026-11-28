@@ -7,6 +7,7 @@
 #include <QTableWidget>
 #include <QWidget>
 #include <cstdio>
+#include "scheduler.h"
 
 namespace ui {
 
@@ -47,11 +48,25 @@ inline QColor pidColor(int pid) {
     return pal[pid % 12];
 }
 
-// Folder with the sample files (source tree, or ./samples next to the working dir).
-inline QString samplesDir() {
-    for (const QString& d : {QString("samples"), QString("../samples"), QString(OSSIM_SOURCE_DIR "/samples")})
-        if (QDir(d).exists()) return QDir(d).absolutePath();
-    return QString(OSSIM_SOURCE_DIR "/samples");
+// Folder with the sample files: a samples/ folder on disk (next to the executable or the working
+// directory), else the copy embedded in the executable (see SampleRegistry.cpp).
+QString samplesDir();
+
+// One-line rule of a CPU scheduling algorithm (combo-box tooltip, sample descriptions).
+inline QString algoExplanation(Algo a) {
+    switch (a) {
+        case Algo::FCFS: return "First Come First Served: non-preemptive, in arrival order.";
+        case Algo::SJF: return "Shortest Job First: non-preemptive, the shortest burst among the ready processes.";
+        case Algo::SRTF: return "Shortest Remaining Time First: preemptive SJF, re-evaluated every tick.";
+        case Algo::LJF: return "Longest Job First: non-preemptive, the LONGEST burst first (ties: earlier arrival, lower pid). "
+                               "Opposite of SJF: short jobs wait and can starve.";
+        case Algo::LRTF: return "Longest Remaining Time First: preemptive, every tick the longest remaining time runs; a process is "
+                                "preempted only by a STRICTLY longer one (equal: it keeps the CPU). Opposite of SRTF: many switches.";
+        case Algo::RR: return "Round Robin: preemptive, time quantum; arrivals at an expiry are queued before the preempted process.";
+        case Algo::PRIORITY_NP: return "Priority, non-preemptive: lower number = higher priority.";
+        case Algo::PRIORITY_P: return "Priority, preemptive: a higher-priority arrival takes the CPU at once.";
+    }
+    return QString();
 }
 
 // Puts a read-only, centred cell into a table.

@@ -1,0 +1,17 @@
+# processes=5 resources=3
+# Unsafe state (Silberschatz): the Banker's sample after P1's request (1 0 2) was granted and
+# P0's request (0 2 0) was pretend-allocated. No process can finish with Available = 2 1 0,
+# so Check safety reports UNSAFE - this is why the request of P0 is denied.
+available: 2 1 0
+alloc:
+0 3 0
+3 0 2
+3 0 2
+2 1 1
+0 0 2
+max:
+7 5 3
+3 2 2
+9 0 2
+2 2 2
+4 3 3

@@ -12,6 +12,13 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
+#include <QApplication>
+#include <QEvent>
+#include <QMenu>
+#include <QStyle>
+#include <QToolButton>
+#include "SampleRegistry.h"
 
 // ================================================================ PlaybackBar
 
@@ -263,7 +270,7 @@ void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* c
     lay->setSpacing(6);
     if (header) lay->addWidget(header);
     auto* top = new PanelSplitter(Qt::Horizontal, id + "/h");
-    if (config) top->addPanel(new ConfigPanel(config), PanelSplitter::Config);
+    if (config) top->addPanel(new ConfigPanel(withSampleSlot(config)), PanelSplitter::Config);
     if (center) top->addPanel(center, PanelSplitter::Center);
     if (inspector) top->addPanel(ConfigPanel::wrap(inspector, "inspectorPanel"), PanelSplitter::Inspector, 1, 0.28);
     if (!bottom) {                          // no bottom pages: the playback bar sits right below
@@ -281,4 +288,142 @@ void assembleModule(QWidget* owner, QWidget* header, QWidget* config, QWidget* c
     ll->addWidget(bottom, 1);
     vsplit->addPanel(ConfigPanel::wrap(low, "detailPanel"), PanelSplitter::Detail, 1);
     lay->addWidget(vsplit, 1);
+}
+
+// ================================================================ Load Sample
+
+QWidget* withSampleSlot(QWidget* config) {
+    auto* wrap = new QWidget;
+    auto* l = new QVBoxLayout(wrap);
+    l->setContentsMargins(0, 0, 0, 0);
+    l->setSpacing(6);
+    auto* slot = new QWidget;
+    slot->setObjectName("sampleSlot");
+    auto* sl = new QVBoxLayout(slot);
+    sl->setContentsMargins(0, 0, 0, 0);
+    slot->hide();                                // shown once a control is installed
+    l->addWidget(slot);
+    l->addWidget(config, 1);
+    return wrap;
+}
+
+bool installInSampleSlot(QWidget* page, QWidget* w) {
+    auto* slot = page ? page->findChild<QWidget*>("sampleSlot") : nullptr;
+    if (!slot || !slot->layout()) return false;
+    slot->layout()->addWidget(w);
+    slot->show();
+    return true;
+}
+
+SampleButton::SampleButton(SampleRegistry* reg, const QString& module, QWidget* parent)
+    : QWidget(parent), reg_(reg), module_(module) {
+    setObjectName("sampleButton");
+    button_ = new QToolButton;
+    button_->setObjectName("loadSampleButton");
+    button_->setText("Load Sample");
+    button_->setAccessibleName("Load Sample");
+    button_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
+    button_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button_->setPopupMode(QToolButton::InstantPopup);
+    button_->setToolTip("Load a built-in example workload for this module (fills the inputs; you start the run). "
+                        "Your own files: File > Open File...");
+    button_->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+    menu_ = new QMenu(button_);
+    menu_->setToolTipsVisible(true);
+    button_->setMenu(menu_);
+    connect(menu_, &QMenu::aboutToShow, this, &SampleButton::rebuildMenu);
+    current_ = new QLabel;
+    current_->setObjectName("sampleCurrent");
+    current_->setWordWrap(true);
+    current_->setTextFormat(Qt::PlainText);
+    current_->setText("No sample loaded - choose one to start quickly.");
+    auto* l = new QVBoxLayout(this);
+    l->setContentsMargins(0, 0, 0, 2);
+    l->setSpacing(3);
+    l->addWidget(button_, 0, Qt::AlignLeft);
+    l->addWidget(current_);
+    connect(reg_, &SampleRegistry::loaded, this, [this](const SampleDef& d) { if (d.module == module_) showLoaded(d); });
+    rebuildMenu();
+    restyle();
+}
+
+void SampleButton::rebuildMenu() {
+    menu_->clear();
+    for (const QString& c : reg_->categories(module_)) {
+        menu_->addSection(c);
+        for (const SampleDef* d : reg_->forModule(module_)) {
+            if (d->category != c) continue;
+            QString id = d->id;
+            QAction* a = menu_->addAction(d->mode.isEmpty() ? d->name : QString("%1   [%2]").arg(d->name, d->mode));
+            a->setData(id);
+            a->setToolTip(ui::sampleDetails(*d, false));
+            a->setStatusTip(d->description);
+            connect(a, &QAction::triggered, this, [this, id] { reg_->load(id); });
+        }
+    }
+    if (menu_->isEmpty()) menu_->addAction("(no samples for this module)")->setEnabled(false);
+    menu_->addSeparator();
+    QAction* b = menu_->addAction("Browse samples (details, Load && Run)...");
+    b->setToolTip("Compact sample browser with the full description of every sample");
+    connect(b, &QAction::triggered, this, [this] { browse(); });
+}
+
+QStringList SampleButton::menuSampleIds() const {
+    QStringList ids;
+    for (QAction* a : menu_->actions()) if (!a->data().toString().isEmpty()) ids << a->data().toString();
+    return ids;
+}
+
+QString SampleButton::currentText() const { return current_->text(); }
+
+bool SampleButton::browse() {
+    SampleDialog dlg(reg_, module_, title_, window());
+    if (dlg.exec() != QDialog::Accepted || dlg.selectedId().isEmpty()) return false;
+    return reg_->load(dlg.selectedId(), dlg.runRequested());
+}
+
+void SampleButton::showLoaded(const SampleDef& d) {
+    // Name + a short description (the full text is in the tooltip) so the inputs keep their space.
+    QString desc = d.description.size() > 110 ? d.description.left(107).trimmed() + "..." : d.description;
+    current_->setText("Sample: " + d.name + " - " + desc);
+    current_->setToolTip(ui::sampleDetails(d, false));
+}
+
+// Accent style: the palette's highlight colour (theme aware) with a readable text colour.
+void SampleButton::restyle() {
+    if (styling_) return;
+    styling_ = true;
+    QColor bg = QApplication::palette().color(QPalette::Highlight);
+    QColor fg = ui::contrastRatio(QColor("#ffffff"), bg) >= ui::contrastRatio(QColor("#1f2328"), bg) ? QColor("#ffffff")
+                                                                                                    : QColor("#1f2328");
+    if (bg != bg_ || fg != fg_) {
+        bg_ = bg;
+        fg_ = fg;
+        button_->setStyleSheet(QString(
+            "QToolButton#loadSampleButton { background:%1; color:%2; font-weight:bold; border:1px solid %3;"
+            " border-radius:4px; padding:4px 10px; }"
+            "QToolButton#loadSampleButton:hover { background:%4; }"   /* darker: contrast never drops */
+            "QToolButton#loadSampleButton:pressed { background:%3; }"
+            "QToolButton#loadSampleButton::menu-indicator { subcontrol-position: right center; right:4px; }")
+            .arg(bg.name(), fg.name(), bg.darker(125).name(), bg.darker(110).name()));
+        current_->setStyleSheet("font-style: italic;");
+    }
+    styling_ = false;
+}
+
+void SampleButton::changeEvent(QEvent* e) {
+    QWidget::changeEvent(e);
+    if (e->type() == QEvent::PaletteChange || e->type() == QEvent::ApplicationPaletteChange) restyle();
+}
+
+namespace ui {
+// WCAG relative luminance contrast ratio (1..21) between two colours.
+double contrastRatio(const QColor& a, const QColor& b) {
+    auto lum = [](const QColor& c) {
+        auto ch = [](double v) { return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * ch(c.redF()) + 0.7152 * ch(c.greenF()) + 0.0722 * ch(c.blueF());
+    };
+    double la = lum(a), lb = lum(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
 }

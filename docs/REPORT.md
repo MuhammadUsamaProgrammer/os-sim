@@ -138,7 +138,7 @@ every `runSem`, so each process thread wakes, sees the flag and returns. `join()
 ## 5. Implementation of each module
 
 ### 5.1 CPU scheduling (`core/scheduler.cpp`)
-A single tick-based simulator serves all six algorithms. In each tick:
+A single tick-based simulator serves all eight algorithms (FCFS, SJF, SRTF, LJF, LRTF, RR, Priority NP / P). In each tick:
 (1) arriving processes are appended to the ready queue (same tick → lower pid first);
 (2) `schedulerPick()` applies the preemption rule of the algorithm and chooses the process for this tick;
 (3) the process runs one tick and the tick is appended to the Gantt timeline (adjacent ticks of the same pid are merged; idle ticks get `pid = -1`).
@@ -151,6 +151,35 @@ A single tick-based simulator serves all six algorithms. In each tick:
 - Metrics: TAT = completion − arrival, WT = TAT − burst, RT = first run − arrival; context switches =
   number of pid changes in the timeline (idle ignored); CPU utilisation = busy ticks / total ticks.
 - Validation throws `std::invalid_argument` (empty list, burst ≤ 0, negative arrival/pages, duplicate pid, quantum ≤ 0 for RR).
+
+**LJF and LRTF (added later; same simulator, no second engine).** Both reuse `schedulerPick()`; only
+the comparison key and one preemption rule are new. The enum values `Algo::LJF` and `Algo::LRTF`
+were appended, so the old values (FCFS = 0 … PRIORITY_P = 5) are unchanged; `allAlgos()` gives the
+display order FCFS, SJF, SRTF, LJF, LRTF, RR, Priority (NP), Priority (P). GUI combo boxes store the
+enum value as item data (never the index).
+
+| | LJF (non-preemptive) | LRTF (preemptive) |
+|---|---|---|
+| Key | longest **burst** among the ready processes | longest **remaining** time, every tick |
+| Preemption | never: runs until it terminates (or blocks in the integrated run) | only if a ready process has **strictly** more remaining time |
+| Tie when the CPU is free | earlier arrival, then lower pid | earlier arrival, then lower pid |
+| Tie with the running process | – | the running process **keeps** the CPU (no needless switch) |
+| Mirror of | SJF | SRTF |
+
+In `better()` the "longest" keys are negated (`-burst`, `-remaining`) so that the same "smaller key
+wins → earlier arrival → lower pid" rule applies. In `schedulerPick()` LRTF only preempts when
+`procs[r].remaining > procs[running].remaining` for some ready `r`. Because the running process keeps
+the CPU on a tie, LRTF alternates between processes whose remaining times become equal: one tick
+later the other one is strictly longer and takes over, so LRTF causes many context switches and every
+process finishes near the end. Both algorithms favour long jobs: a short job can starve (see the
+`processes_ljf_starvation.csv` sample), which is exactly the opposite problem to SJF / SRTF, where
+long jobs can starve. They are rarely used in practice and serve as a contrast in the course.
+
+Hand trace of LRTF on `processes_ljf_lrtf.csv` (P1 0 8, P2 1 4, P3 2 9, P4 3 5):
+`P1 0–2, P3 2–6, P1 6–8, P3 8–9, P4 9–11, P1 11–12, P2 12–13, P3 13–15, P1 15–16, P2 16–17,
+P4 17–19, P1 19–20, P2 20–21, P3 21–23, P1 23–24, P2 24–25, P4 25–26` – completions 24 / 25 / 23 / 26,
+WT 16 / 20 / 12 / 18 (avg 16.5), RT 0 / 11 / 0 / 6 (avg 4.25), 16 context switches.
+(t=2: P3 has 9 > 6 and preempts P1; t=5: P3 and P1 both 6 → P3 continues; t=6: P1 6 > 5 → P1.)
 
 ### 5.2 Memory (`core/memory.cpp`)
 `FramePool` holds the frames and the bookkeeping needed by the replacement policy: load order
@@ -207,6 +236,22 @@ claim is the sum of its scripted requests.
 observer callback into a signal delivered with a queued connection to the GUI thread, so worker
 threads never touch widgets. Each run has a generation number so stale queued events are ignored.
 Every input is validated and errors are shown with `QMessageBox::warning`.
+
+**Built-in samples (Load Sample).** `gui/SampleRegistry.*` is the one catalogue of all built-in
+samples: each `SampleDef` has a stable id, name, description, module id (the Module Visibility
+Manager id, e.g. `memory.heap`), category, mode, parameters, level, backing file and a loading
+handler (plus an optional run handler for *Load && Run*). `gui/SampleCatalog.cpp`
+(`MainWindow::registerSamples`) fills it with adapters over the EXISTING providers – core preset
+lists (`lifecyclePresets()`, `syncScenarios()`, `heapPresets()`, …), the tabs' own presets
+(`loadPreset(i)`) and the files in `samples/` – so no workload is defined twice. `SampleRegistry::load()`
+asks a guard (stop / pause a running simulation; confirm before replacing the shared Storage disk),
+calls the handler and emits `loaded()` once. `SampleButton` (ModuleKit) is the shared accent button;
+`assembleModule()` reserves a "sample slot" at the top of every configuration panel, so all 24 module
+pages get the button in the same place. The File menu uses the same registry
+(`File > Load Built-in Sample`) and keeps the original file list and a new `Open File...` importer.
+The `samples/` folder is embedded as Qt resources (`:/samples`); `ui::samplesDir()` uses a folder on
+disk when one exists and otherwise an extracted copy, so the samples work from any directory. The full
+inventory (180 samples) is in `docs/SAMPLES.md`.
 
 ### 5.8 Phase 2 modules (details and reference tables: `docs/PHASE2_MODULES.md`)
 Each module follows the same design: a pure model in `core/` returns a complete trace of snapshots (or events);
@@ -280,6 +325,27 @@ test_sync_engine: 72 checks, 0 failures
 | Validation | burst 0, duplicate pid | `std::invalid_argument` | pass |
 
 Extra checks: preemptive priority, the RR arrival-at-expiry rule, negative arrival, quantum 0, CSV loading.
+
+### 6.1b LJF and LRTF tests (`test_ljf_lrtf`, 68 checks, all hand-derived)
+
+| Case | Input | Expected | Result |
+|---|---|---|---|
+| LJF, simultaneous arrivals, equal bursts | P1 0 3, P2 0 6, P3 0 4, P4 0 6 | P2 0–6, P4 6–12, P3 12–16, P1 16–19; WT 16/0/12/6, avg 8.5; avg TAT 13.25; 3 switches | pass |
+| LJF, different arrivals | P1 0 8, P2 1 4, P3 2 9, P4 3 5 | P1 0–8, P3 8–17, P4 17–22, P2 22–26; avg WT 10.25, avg TAT 16.75 | pass |
+| LJF tie by arrival | P1 0 2, P5 1 4, P3 2 4 | P5 (earlier arrival) before P3 although its pid is higher | pass |
+| LJF starvation | P1 0 10, P2 1 1, P3 2 9, P4 3 8 | P2 runs last, waits 26 (SJF: 9) | pass |
+| Idle gap (both) | P1 0 2, P2 5 3 | P1 0–2, idle 2–5, P2 5–8; 1 switch; CPU 62.5 % | pass |
+| LRTF preemption | P1 0 3, P2 1 6 | P1 0–1, P2 1–6, P1 6–8, P2 8–9; WT 5 / 2; 3 switches | pass |
+| LRTF equal remaining | P1 0 2, P2 0 2 | P1 0–1, P2 1–3 (P2 keeps the CPU at t=2), P1 3–4 | pass |
+| LRTF ties (sample file) | P1 0 3, P2 0 6, P3 0 4, P4 0 6 | 14 segments (P2 0–1, P4 1–3, …, P3 18–19), 13 switches, avg WT 12.75 | pass |
+| LRTF, different arrivals | P1 0 8, P2 1 4, P3 2 9, P4 3 5 | 17 segments (trace in 5.1), avg WT 16.5, TAT 23, RT 4.25, 16 switches | pass |
+| Determinism, validation | | same result twice; burst 0, duplicate pid, negative arrival, empty list throw; quantum ignored | pass |
+| Compare all | | 8 results; LJF 10.25, LRTF 16.5, SRTF still 6.5 | pass |
+| Animated replay | threaded engine | finish times equal core completion times for LJF and LRTF | pass |
+| Integrated run | no resource requests | completion times equal `runScheduler`; 26 memory references | pass |
+
+`test_procmgmt` and `test_integrated` loop over `allAlgos()`, so they now also cover LJF and LRTF
+(lifecycle simulation = scheduler completion times; every page algorithm × every scheduler).
 
 ### 6.2 Memory acceptance tests
 
@@ -362,6 +428,23 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | `test_mlq` | 26 | MLQ trace and average waiting 3.4; MLFQ trace (P1 demoted twice, done at 19); preemption by higher queues; priority boost; clamping; idle gap; validation |
 | `test_sync_classic` | 473 | readers share and the writer waits; 150 random readers-writers runs without violation; naive philosophers deadlock (every chopstick held, one waiter each); asymmetric order completes; 150 random runs each |
 
+### 6.7c Sample loading tests (GUI self-test section "samples", ctest `gui_samples_anywhere`)
+- every one of the 24 leaf modules has samples and a visible, labelled **Load Sample** button with
+  icon and tooltip, not clipped; its menu offers only that module's samples;
+- all 180 samples load (one `loaded()` notification each); 145 samples with a run action execute after loading;
+- correct algorithm / mode: LRTF sample → avg WT 16.5 and 16 switches, LJF → 10.25, FIFO standard
+  string → 15 faults, Belady 4 frames → 10, unsafe Banker state → UNSAFE, RAG cycle → P0, P1
+  deadlocked, disk SSTF → 236 cylinders; loading never runs (stale results are cleared);
+- repeated loading does not duplicate processes; loaded parameters can be edited and re-run;
+- a running animated replay is stopped and a running playback paused before a load;
+- File menu: `Load sample` (files), `Load Built-in Sample` (all 180 entries), `Open File...`, export;
+- Module Visibility Manager: a hidden module keeps its samples, loading never changes the workspace,
+  the restored module shows its button and the loaded sample;
+- light and dark theme: button text contrast ≥ 4.5 : 1 (measured 4.88 and 5.08);
+- 1024×768 and 900×650: no button is clipped; `--layout-report 1366x768,1024x768`: 0 problems;
+- `gui_samples_anywhere`: `ossim --sample-report --load-all` from `build/gui` with
+  `OSSIM_FORCE_EMBEDDED_SAMPLES=1` (only the embedded copy) loads every sample.
+
 ### 6.8 Sanitizers and GUI smoke test
 - `-DSANITIZE=thread`: all test programs pass (including the real synchronization demos), no ThreadSanitizer report.
 - `-DSANITIZE=address` (address + undefined): all tests pass and the whole GUI `--selftest` exits 0 with no report.
@@ -382,6 +465,8 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | FCFS | 17.00 | 27.00 | 17.00 | 2 |
 | SJF | 3.00 | 13.00 | 3.00 | 2 |
 | SRTF | 3.00 | 13.00 | 3.00 | 2 |
+| LJF | 17.00 | 27.00 | 17.00 | 2 |
+| LRTF | 19.00 | 29.00 | 15.00 | 6 |
 | Round Robin q=4 | 5.67 | 15.67 | 3.67 | 3 |
 | Priority (NP) | 3.00 | 13.00 | 3.00 | 2 |
 | Priority (P) | 3.00 | 13.00 | 3.00 | 2 |
@@ -393,6 +478,8 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | FCFS | 8.75 | 15.25 | 8.75 | 3 |
 | SJF | 7.75 | 14.25 | 7.75 | 3 |
 | SRTF | **6.50** | **13.00** | **4.25** | 4 |
+| LJF | 10.25 | 16.75 | 10.25 | 3 |
+| LRTF | 16.50 | 23.00 | **4.25** | 16 |
 | Round Robin q=4 | 11.75 | 18.25 | 4.50 | 7 |
 | Priority (NP) | 7.75 | 14.25 | 7.75 | 3 |
 | Priority (P) | 7.00 | 13.50 | 6.00 | 4 |
@@ -404,16 +491,25 @@ the others finish. Without auto-recover the run stops in the deadlock. The logs 
 | FCFS | 9.60 | 13.40 | 9.60 | 4 |
 | SJF | 3.20 | 7.00 | 3.20 | 4 |
 | SRTF | 3.20 | 7.00 | 3.20 | 4 |
+| LJF | 12.00 | 15.80 | 12.00 | 4 |
+| LRTF | 13.20 | 17.00 | 10.40 | 9 |
 | Round Robin q=4 | 7.40 | 11.20 | 4.80 | 7 |
 | Priority (NP) | 8.20 | 12.00 | 8.20 | 4 |
 | Priority (P) | 8.20 | 12.00 | 8.20 | 4 |
 
 Observations:
 - SRTF gives the lowest average waiting and turnaround time, because it always runs the shortest remaining job.
-- Round Robin has the most context switches but a good response time, because every process gets the CPU early.
+- Among the six classic algorithms, Round Robin has the most context switches but a good response time, because every process gets the CPU early (LRTF switches even more).
 - FCFS suffers from the convoy effect: one long job (P1 = 24) makes the short ones wait (avg WT 17).
 - Priority scheduling optimises for priority, not waiting time (8.2 versus 3.2 for SJF on the same input).
   A low-priority process can starve.
+- LRTF has the highest average waiting time on every sample, and LJF is among the worst (it ties
+  FCFS on processes_fcfs.csv; Round Robin q=4 is even worse than LJF on processes_srtf.csv, 11.75
+  versus 10.25). They do the opposite of SJF / SRTF. LRTF also has by far the most context switches
+  (16 on processes_srtf.csv), because processes with equal remaining time take turns tick by tick;
+  its response time can still be good (4.25) since a newly arrived long job runs at once.
+- `processes_ljf_starvation.csv` (P1 10, P2 1, P3 9, P4 8): under LJF the 1-tick job waits 26 ticks
+  (avg WT 12.5); SJF 8.5, SRTF 6.5, LRTF 18.0 with 18 context switches.
 
 ### 7.2 Page replacement (3 frames)
 
@@ -513,6 +609,12 @@ producer-consumer and monitor 20 of 20 items with equal checksums.
 
 - Phase 3: Windows System Monitor backend not verified on Windows; job-control fg / bg modelled (no PTY); the virtual
   filesystem and the heap are teaching models (see `docs/PHASE3_MODULES.md`, section 11).
+
+- LJF / LRTF: LJF uses the burst (not the remaining time) as its key, as the course defines it; in the
+  integrated run a process that was blocked and is dispatched again therefore competes with its full
+  burst. Samples are built-in teaching workloads; `File > Open File...` asks which module a file
+  belongs to when its name does not reveal it. The confirmation before a sample replaces the shared
+  Storage disk is shown every time (it does not track whether the disk was modified).
 
 ## 9. Conclusion
 

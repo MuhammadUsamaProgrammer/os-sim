@@ -364,6 +364,35 @@ Status: done. Baseline before the change (commit f1adcfb): 0 warnings, ctest 21/
 - `-DSANITIZE=address` (address + undefined): 0 warnings, ctest 23/23 and the whole `--selftest` (incl. "modules")
   pass with no sanitizer report. Windows / macOS: not verified.
 
+## LJF / LRTF scheduling and the Load Sample system (details: docs/SAMPLES.md, REPORT 5.1 / 5.6 / 6.1b / 6.7c)
+- Status: DONE.
+- Scheduling: `Algo::LJF` (non-preemptive, longest burst) and `Algo::LRTF` (preemptive, longest remaining time;
+  preempts only for a strictly longer remaining time, the running process keeps the CPU on a tie; free CPU: earlier
+  arrival, then lower pid) appended to the enum (old values unchanged), implemented in the shared `better()` /
+  `schedulerPick()` (no second engine). `allAlgos()` = 8 algorithms in display order; `runAll()` = 8 results;
+  `algoId()` / `algoFromId()` / `isPreemptive()`. Audit fix: the Process Lifecycle policy combo cast the combo index
+  to `Algo` (would have broken with the new order) - now uses item data. Console: `ljf` / `lrtf` names.
+  GUI: algorithm combo tooltips explain each rule; Compare all shows 8 rows; animated replay, integrated run,
+  process lifecycle and export work unchanged for the new algorithms.
+- New samples: `processes_ljf_lrtf.csv`, `processes_ljf_ties.csv`, `processes_ljf_starvation.csv`,
+  `processes_idle_gap.csv`, `banker_unsafe.txt`, `deadlock_rag_cycle.txt`; Memory > Swapping got 3 presets.
+- Load Sample: `gui/SampleRegistry.*` (SampleDef: id, name, description, module, category, mode, parameters, level,
+  file, loader, optional run; guard; dialog with Load / Load && Run), `gui/SampleCatalog.cpp` (180 samples in
+  24 modules as adapters over the existing presets and files), `SampleButton` + `withSampleSlot` in ModuleKit
+  (accent button at the top of every configuration panel). File menu: `Load Built-in Sample` (same catalogue),
+  `Load sample` (original file list, kept) and `Open File...` (import own files). Samples embedded as Qt resources;
+  `ui::samplesDir()` no longer compiles in the source path. Storage's old "Load sample" disk button is now
+  "Sample disk" (avoids two buttons with the same name).
+- Run: `./build/gui/ossim` -> any module -> Load Sample; `QT_QPA_PLATFORM=offscreen ./build/gui/ossim --sample-report --load-all`;
+  `./build/apps/ossim_console engine samples/processes_ljf_lrtf.csv lrtf`.
+- Tests: `test_ljf_lrtf: 68 checks, 0 failures` (hand-derived traces); `test_scheduler` now expects 8 results;
+  ctest 25/25 (new: `test_ljf_lrtf`, `gui_samples_anywhere`); `--selftest` ALL PASSED (634 PASS lines, incl. 40+
+  "samples" checks); `--layout-report 1366x768,1024x768`: 0 problems.
+- Sanitizers: `-DSANITIZE=address` (address + undefined): ctest 25/25 and the whole `--selftest` (incl. "samples") exit 0 with
+  no sanitizer report; `-DSANITIZE=thread`: test_engine, test_ljf_lrtf (threaded LJF / LRTF replay), test_sync_engine pass, no report.
+- Known limits: LJF keys on the burst (course definition); the Storage confirmation appears for every disk-replacing
+  sample (modification is not tracked); `Open File...` asks for the importer when the file name does not tell.
+
 ## Definition of done
 - [x] Clean build with zero warnings, all tests green.
 - [x] Every number of CLAUDE.md Section 6 is asserted in a test and passes.
@@ -376,6 +405,8 @@ Status: done. Baseline before the change (commit f1adcfb): 0 warnings, ctest 21/
 - [x] Export writes .txt and .csv with all sections (checked by the self-test).
 - [x] README.md, docs/REPORT.md, docs/VIVA_NOTES.md, PROGRESS.md exist.
 - [x] One git commit per stage.
+- [x] LJF / LRTF in every algorithm list, Compare all (8), engine replay, integrated run; `test_ljf_lrtf` passes.
+- [x] Load Sample in every module page (24), File menu integration, embedded samples; self-test and `gui_samples_anywhere` pass.
 
 ## Still to do by the student
 - Take the screenshots listed in `docs/screenshots/README.md`.

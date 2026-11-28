@@ -664,15 +664,30 @@ void MemAdvArea::showDemand(int step, bool fwd) {
 
 // ================================================================ swapping
 
+// Swapping presets (whole processes): RAM capacity, "name size" list, run order.
+struct SwapPresetDef { const char* name; int cap; const char* procs; const char* order; const char* text; };
+static const SwapPresetDef kSwapPresets[] = {
+    {"Reference: 4 processes, RAM 100", 100, "A 40, B 50, C 30, D 20", "A B C A D B",
+     "C does not fit next to A and B: the process loaded longest ago is swapped out, later swapped in again."},
+    {"Everything fits (no swapping)", 200, "A 40, B 50, C 30, D 20", "A B C A D B",
+     "RAM holds all four processes: every run after the first load is a hit, no swap-outs."},
+    {"Ping-pong: two big processes, RAM 60", 60, "A 40, B 40", "A B A B A B",
+     "Only one of the two fits: every switch swaps a whole process out and the other in (very expensive)."},
+};
+
 QWidget* MemAdvArea::buildSwap() {
     swHdr_ = new ModuleHeader("Swapping (whole processes)",
         "Unlike demand paging (single pages), swapping moves a WHOLE process between RAM and the backing store. "
         "Illustrative model: the process loaded longest ago is swapped out until the next one fits.");
     swCap_ = spin(10, 100000, 100, "RAM capacity (units)");
+    swPreset_ = new QComboBox;
+    swPreset_->addItem("(custom)");
+    for (const SwapPresetDef& p : kSwapPresets) swPreset_->addItem(p.name);
     swProcs_ = new QLineEdit("A 40, B 50, C 30, D 20");
     swOrder_ = new QLineEdit("A B C A D B");
     auto* cfg = new QWidget;
     auto* f = new QFormLayout(cfg);
+    f->addRow("Preset:", swPreset_);
     f->addRow("RAM capacity:", swCap_);
     f->addRow("Processes (name size):", swProcs_);
     f->addRow("Run order:", swOrder_);
@@ -680,9 +695,11 @@ QWidget* MemAdvArea::buildSwap() {
     swBar_ = new PlaybackBar;
     auto* page = new QWidget;
     assembleModule(page, swHdr_, cfg, titledBox("RAM and backing store", swView_), nullptr, swBar_, nullptr);
-    connect(swCap_, &QSpinBox::valueChanged, this, [this] { rebuildSwap(); });
-    connect(swProcs_, &QLineEdit::editingFinished, this, [this] { rebuildSwap(); });
-    connect(swOrder_, &QLineEdit::editingFinished, this, [this] { rebuildSwap(); });
+    auto swEdited = [this] { if (loading_) return; loading_ = true; swPreset_->setCurrentIndex(0); loading_ = false; rebuildSwap(); };
+    connect(swCap_, &QSpinBox::valueChanged, this, swEdited);
+    connect(swProcs_, &QLineEdit::editingFinished, this, swEdited);
+    connect(swOrder_, &QLineEdit::editingFinished, this, swEdited);
+    connect(swPreset_, &QComboBox::currentIndexChanged, this, [this](int i) { if (!loading_ && i > 0) loadSwapPreset(i - 1); });
     connect(swBar_, &PlaybackBar::positionChanged, this, [this](int s, bool fwd) {
         if (!swap_) return;
         swView_->setStep(s, fwd ? swBar_->animMs() : 0);
@@ -693,6 +710,42 @@ QWidget* MemAdvArea::buildSwap() {
     connect(swBar_, &PlaybackBar::resetRequested, this, [this] { rebuildSwap(); });
     rebuildSwap();
     return page;
+}
+
+bool MemAdvArea::loadSwapPreset(int i) {
+    if (i < 0 || i >= (int)(sizeof kSwapPresets / sizeof kSwapPresets[0])) return false;
+    const SwapPresetDef& p = kSwapPresets[i];
+    loading_ = true;
+    swPreset_->setCurrentIndex(i + 1);
+    swCap_->setValue(p.cap);
+    swProcs_->setText(p.procs);
+    swOrder_->setText(p.order);
+    loading_ = false;
+    bool ok = rebuildSwap();
+    if (ok) swHdr_->setStatus(p.text);
+    return ok;
+}
+
+QList<QPair<QString, QString>> MemAdvArea::presetList(const QString& page) {
+    QList<QPair<QString, QString>> v;
+    if (page == "allocation")
+        for (const AllocPresetDef& p : kAllocPresets) v.append(qMakePair<QString, QString>(p.name, p.text));
+    else if (page == "paging")
+        for (const AddrPreset& p : kAddrPresets)
+            v.append(qMakePair<QString, QString>(p.name, QString("Translate logical address %1 (%2) with the reference page table.").arg(p.addr).arg(p.write ? "write" : "read")));
+    else if (page == "segmentation")
+        for (const SegPresetDef& p : kSegPresets)
+            v.append(qMakePair<QString, QString>(p.name, QString("Segment %1, offset %2, %3 access against the reference segment table.").arg(p.seg).arg(p.off)
+                                  .arg(p.acc == 'w' ? "write" : p.acc == 'x' ? "execute" : "read")));
+    else if (page == "demand")
+        for (const DpPresetDef& p : kDpPresets) v.append(qMakePair<QString, QString>(p.name, p.text));
+    else if (page == "swapping")
+        for (const SwapPresetDef& p : kSwapPresets) v.append(qMakePair<QString, QString>(p.name, p.text));
+    else if (page == "thrashing") {
+        v.append(qMakePair<QString, QString>("Cyclic 0 1 2 3 x5, LRU, 3 vs 4 frames", "A loop over 4 pages with only 3 frames faults on every reference; one more frame removes almost all faults."));
+        v.append(qMakePair<QString, QString>("Locality string, 3 vs 6 frames", "A seeded string with locality: the fault rate drops sharply once the working set fits."));
+    }
+    return v;
 }
 
 bool MemAdvArea::rebuildSwap() {
@@ -728,7 +781,7 @@ QWidget* MemAdvArea::buildThrash() {
         "When a process has fewer frames than its working set, almost every reference faults and the system spends its "
         "time paging. Compare two frame counts on the same references; the bottom graph is a labelled logical model.");
     thPreset_ = new QComboBox;
-    thPreset_->addItems({"Cyclic 0 1 2 3 x5, LRU, 3 vs 4 frames", "Locality string, 3 vs 6 frames"});
+    for (const auto& p : presetList("thrashing")) thPreset_->addItem(p.first);
     thMode_ = new QComboBox;
     thMode_->addItems({"Cyclic loop", "Locality (seeded random)"});
     thPages_ = spin(1, 64, 4, "Distinct pages");

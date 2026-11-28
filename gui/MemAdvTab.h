@@ -2,6 +2,9 @@
 // Phase 2 sub-tabs: Allocation & Fragmentation, Paging & Address Translation, Segmentation,
 // Demand Paging, Swapping and Thrashing. All values come from core/memadv.h.
 #pragma once
+#include <QList>
+#include <QPair>
+#include <QString>
 #include <QTabWidget>
 #include <optional>
 #include <vector>
@@ -30,6 +33,10 @@ public:
     bool rebuildDemand();
     const std::vector<DpResult>& demandResults() const { return dpAll_; }
     bool rebuildSwap();
+    bool loadSwapPreset(int i);
+    // Built-in presets of one sub-page ("allocation", "paging", "segmentation", "demand", "swapping",
+    // "thrashing") as {name, description}; index = the page's load...Preset(i).
+    static QList<QPair<QString, QString>> presetList(const QString& page);
     const std::optional<SwapResult>& swapResult() const { return swap_; }
     bool loadThrashPreset(int i);
     bool rebuildThrash();
@@ -108,6 +115,7 @@ private:
     ModuleHeader* swHdr_;
     QSpinBox* swCap_;
     QLineEdit *swProcs_, *swOrder_;
+    QComboBox* swPreset_ = nullptr;
     SwapView* swView_;
     PlaybackBar* swBar_;
     std::optional<SwapResult> swap_;

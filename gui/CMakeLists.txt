@@ -33,7 +33,11 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
     RtSchedTab.h RtSchedTab.cpp
     MlqTab.h MlqTab.cpp
     ModuleManager.h ModuleManager.cpp
-    WorkspaceUi.h WorkspaceUi.cpp)
+    WorkspaceUi.h WorkspaceUi.cpp
+    SampleRegistry.h SampleRegistry.cpp SampleCatalog.cpp)
+  # Built-in samples are embedded (:/samples/...) so they work from any working directory.
+  file(GLOB OSSIM_SAMPLE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/samples/*)
+  qt_add_resources(ossim "samples" PREFIX "/" BASE ${CMAKE_SOURCE_DIR} FILES ${OSSIM_SAMPLE_FILES})
   target_link_libraries(ossim PRIVATE osengine oscore Qt6::Widgets)
   target_compile_definitions(ossim PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                              OSSIM_HELPER="$<TARGET_FILE:ossim_helper>")
@@ -42,6 +46,10 @@ if(Qt6_FOUND AND Qt6Widgets_FOUND)
   add_test(NAME gui_workspace_restart
            COMMAND ${CMAKE_COMMAND} -DOSSIM=$<TARGET_FILE:ossim> -DCFG=${CMAKE_BINARY_DIR}/workspace-test-config
                    -P ${CMAKE_SOURCE_DIR}/tests/workspace_restart.cmake)
+  # Built-in samples from another working directory, using only the embedded copy.
+  add_test(NAME gui_samples_anywhere COMMAND ossim --sample-report --load-all WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/gui)
+  set_tests_properties(gui_samples_anywhere PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;OSSIM_FORCE_EMBEDDED_SAMPLES=1"
+                       PASS_REGULAR_EXPRESSION "embedded copy" FAIL_REGULAR_EXPRESSION "FAIL")
 else()
   message(WARNING "Qt6 Widgets not found: GUI (ossim) will not be built. "
                   "Install with: sudo apt install qt6-base-dev")

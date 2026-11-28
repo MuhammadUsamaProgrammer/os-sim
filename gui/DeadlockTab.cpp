@@ -14,6 +14,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include "PanelLayout.h"
+#include "ModuleKit.h"
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -139,7 +140,7 @@ DeadlockTab::DeadlockTab(QWidget* parent) : QWidget(parent) {
     // The matrices are the input of this module: a scrollable configuration panel that may take
     // up to about half of the width by default.
     auto* split = new PanelSplitter(Qt::Horizontal, "Deadlock/h");
-    split->addPanel(new ConfigPanel(left), PanelSplitter::Config, 1, 0.55);
+    split->addPanel(new ConfigPanel(withSampleSlot(left)), PanelSplitter::Config, 1, 0.55);
     split->addPanel(right, PanelSplitter::Center);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
@@ -504,6 +505,11 @@ bool DeadlockTab::checkSafety() {
 }
 
 // Banker's resource-request algorithm; a granted request is applied to the tables.
+void DeadlockTab::prefillRequest(int row, const QString& text) {
+    if (row >= 0 && row < reqPid_->count()) reqPid_->setCurrentIndex(row);
+    reqEdit_->setText(text);
+}
+
 bool DeadlockTab::requestResources(int row, const QString& text) {
     Matrix alloc, max, req; Vec avail;
     if (!readAll(alloc, max, req, avail)) return false;

@@ -25,10 +25,16 @@ readers-writers and dining-philosophers problems (details: `docs/PHASE3_MODULES.
 
 ## Features
 
-- **CPU scheduling:** FCFS, SJF, SRTF, Round Robin (quantum), Priority (non-preemptive and
-  preemptive). Gantt chart, per-process completion/waiting/turnaround/response times, averages,
-  context switches and CPU utilisation. *Compare all* runs the six algorithms on the same input,
-  with a table (best values in bold green) and a bar chart.
+- **CPU scheduling:** FCFS, SJF, SRTF, **LJF** (Longest Job First), **LRTF** (Longest Remaining
+  Time First), Round Robin (quantum), Priority (non-preemptive and preemptive). Gantt chart,
+  per-process completion/waiting/turnaround/response times, averages, context switches and CPU
+  utilisation. *Compare all* runs the eight algorithms on the same input, with a table (best values
+  in bold green) and a bar chart.
+- **Load Sample (every module):** a prominent accent **Load Sample** button at the top of every
+  module's configuration panel opens that module's built-in samples (180 in total, grouped into
+  categories, each with a description, mode and parameters). Loading fills the inputs only; the
+  *Browse samples* dialog also offers **Load && Run**. The same catalogue is in
+  `File > Load Built-in Sample`; `File > Open File...` imports your own files.
 - **Thread engine:** *Run animated* replays the schedule with one `pthread` per process plus a
   clock thread (mutex + `sem_t` handshake + `pthread_cond_*` for pause/step + `pipe()` log channel).
   Pause, Step, Stop and a speed slider are available. The logs are byte-identical on every run.
@@ -102,9 +108,10 @@ demo and the tests still build.
 ```bash
 mkdir -p build && cd build
 cmake .. && make -j2          # use make -j1 if the VM runs out of memory
-ctest --output-on-failure     # 22 test programs + the workspace restart test, all must pass
+ctest --output-on-failure     # 23 test programs + 2 GUI tests (workspace restart, samples from anywhere)
 ./gui/ossim                   # the GUI
 QT_QPA_PLATFORM=offscreen ./gui/ossim --selftest   # automatic GUI smoke test, exit code 0
+QT_QPA_PLATFORM=offscreen ./gui/ossim --sample-report --load-all   # sample inventory, loads every sample
 ```
 
 Console demo (run from the project root so `samples/` is found):
@@ -115,6 +122,7 @@ Console demo (run from the project root so `samples/` is found):
 ./build/apps/ossim_console memory "7,0,1,2,0,3,0,4" 3
 ./build/apps/ossim_console deadlock
 ./build/apps/ossim_console engine samples/processes_fcfs.csv rr 4 --real   # live thread log + fork/exec demo
+./build/apps/ossim_console engine samples/processes_ljf_lrtf.csv lrtf      # algorithms: fcfs sjf srtf ljf lrtf rr prio prio-p
 ./build/apps/ossim_console sync --real          # synchronization scenarios, comparison, real pthread demos
 ./build/apps/ossim_helper zombie                # one Live Linux demo on its own (fork exec wait sleep zombie
                                                 # orphan signal shm msg pipe fifo "threads 4 10"
@@ -135,7 +143,7 @@ os-sim/
 ├── CMakeLists.txt     top level (C++17, -Wall -Wextra, -DSANITIZE=thread|address)
 ├── core/              pure C++17 algorithms, no Qt, no threads (library oscore)
 │   ├── pcb.h            PCB and process states
-│   ├── scheduler.*      FCFS/SJF/SRTF/RR/Priority, schedulerPick()
+│   ├── scheduler.*      FCFS/SJF/SRTF/LJF/LRTF/RR/Priority, schedulerPick()
 │   ├── memory.*         FramePool (FIFO/LRU/Optimal), page tables, frame allocator
 │   ├── deadlock.*       Banker's, detection, recovery, RAG
 │   ├── integrated.*     integrated run (scheduling + paging + resources)
@@ -162,7 +170,8 @@ os-sim/
 ├── apps/console_main.cpp   console demo (ossim_console)
 ├── apps/ossim_helper.cpp   Live Linux demo helper (single-threaded, launched with QProcess)
 ├── gui/               Qt 6 Widgets application (ossim); SyncTab, SyncViews, SyncBridge = Synchronization tab;
-│                      ModuleManager + WorkspaceUi = Modules menu (docs/WORKSPACE.md)
+│                      ModuleManager + WorkspaceUi = Modules menu (docs/WORKSPACE.md);
+│                      SampleRegistry + SampleCatalog + ModuleKit::SampleButton = Load Sample (docs/SAMPLES.md)
 ├── tests/             one test program per module, registered with ctest
 ├── samples/           process CSVs, reference strings, Banker/deadlock matrices, scripted requests
 └── docs/              REPORT.md, VIVA_NOTES.md, PHASE2/3_MODULES.md, WORKSPACE.md, screenshots/
@@ -170,11 +179,25 @@ os-sim/
 
 ## User guide
 
+### Load Sample (all modules)
+Every module has a blue **Load Sample** button at the top of its configuration panel. Click it and
+pick a sample (hover an entry for its description, mode and parameters), or choose *Browse samples*
+for a dialog with full details and **Load && Run**. Loading only fills the inputs (and clears old
+results); you can change anything before you start. If a simulation is running you are asked first;
+samples of Storage & Files ask before they replace the shared virtual disk. The line under the button
+names the loaded sample. `File > Load Built-in Sample` offers the same catalogue by module (a hidden
+module can be revealed from there), `File > Load sample` lists the files in `samples/`, and
+`File > Open File...` imports your own file. The built-in samples are also compiled into the program,
+so they work from any working directory. See `docs/SAMPLES.md` for the full inventory.
+
 ### Scheduling tab
-1. Load a sample (`File > Load sample > processes_fcfs.csv`) or type processes into the table
+1. Load a sample (**Load Sample** button, or `File > Load sample > processes_fcfs.csv`) or type processes into the table
    (Add / Remove / Clear, Load CSV / Save CSV). Columns: PID, Arrival, Burst, Priority (lower =
    higher priority), Pages.
-2. On the **Scheduler** page choose an algorithm. The quantum is enabled only for Round Robin.
+2. On the **Scheduler** page choose an algorithm (hover an entry for its rule). The quantum is enabled only for Round Robin.
+   **LJF** runs the longest burst first and never preempts (ties: earlier arrival, then lower pid).
+   **LRTF** re-checks every tick and preempts only for a *strictly* longer remaining time (on a tie the
+   running process keeps the CPU). They are the mirror images of SJF / SRTF: short jobs wait and can starve.
 3. **Run** shows the Gantt chart and the Results tab (with an Averages row, context switches and
    CPU utilisation).
 4. **Run animated** replays the schedule with the thread engine. Watch the Gantt chart grow, the

@@ -1,5 +1,6 @@
 // ProcessTab.cpp - Process Management and lifecycle module (M2).
 #include "ProcessTab.h"
+#include <algorithm>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
@@ -47,7 +48,7 @@ ProcessTab::ProcessTab(QWidget* parent) : QWidget(parent) {
     preset_->addItem("(custom)");
     for (const LcPreset& p : lifecyclePresets()) preset_->addItem(QString::fromStdString(p.name));
     policy_ = new QComboBox;
-    for (Algo a : allAlgos()) policy_->addItem(algoName(a));
+    for (Algo a : allAlgos()) policy_->addItem(algoName(a), (int)a);   // data = enum value
     quantum_ = new QSpinBox;
     quantum_->setRange(1, 20);
     quantum_->setValue(2);
@@ -305,7 +306,7 @@ bool ProcessTab::rebuild() {
         return false;
     }
     try {
-        sim_ = std::make_unique<LifecycleSim>(v, (Algo)policy_->currentIndex(), quantum_->value(), manual);
+        sim_ = std::make_unique<LifecycleSim>(v, (Algo)policy_->currentData().toInt(), quantum_->value(), manual);
     } catch (const std::exception& e) {
         bar_->setLength(0);
         header_->setStatus(QString("Invalid workload: %1").arg(e.what()), ui::semError());
@@ -464,11 +465,23 @@ void ProcessTab::afterManual(const QString& err) {
     else emit logMessage("Process (manual): " + QString::fromStdString(sim_->current().text));
 }
 
+bool ProcessTab::selectLiveDemo(const QString& key) {
+    int i = demo_->findText(key);
+    if (i < 0) return false;
+    demo_->setCurrentIndex(i);
+    return true;
+}
+
+QString ProcessTab::liveDemoText(const QString& key) {
+    for (auto& d : kDemoText) if (key == d[0]) return d[1];
+    return QString();
+}
+
 void ProcessTab::setManual(bool manual) { mode_->setCurrentIndex(manual ? 1 : 0); }
 
 void ProcessTab::setPolicy(Algo a, int quantum) {
     loading_ = true;
-    policy_->setCurrentIndex((int)a);
+    policy_->setCurrentIndex(std::max(0, policy_->findData((int)a)));
     quantum_->setValue(quantum);
     loading_ = false;
     rebuild();
@@ -479,7 +492,7 @@ bool ProcessTab::loadPreset(int index) {
     if (index < 0 || index >= (int)p.size()) return false;
     loading_ = true;
     fillWorkload(p[index].procs);
-    policy_->setCurrentIndex((int)p[index].policy);
+    policy_->setCurrentIndex(std::max(0, policy_->findData((int)p[index].policy)));
     quantum_->setValue(p[index].quantum);
     preset_->setCurrentIndex(index + 1);
     loading_ = false;

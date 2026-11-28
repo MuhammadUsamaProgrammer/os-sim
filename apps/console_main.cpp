@@ -1,5 +1,5 @@
 // console_main.cpp - console demo of OS-Sim (executable ossim_console).
-// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]
+// Usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|ljf|lrtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]
 // With no arguments it runs every demo on the sample files.
 #include <cstdio>
 #include <iostream>
@@ -40,7 +40,7 @@ static void printResult(const SchedResult& r) {
                 r.avgWaiting, r.avgTurnaround, r.avgResponse, r.contextSwitches, cpuUtilization(r));
 }
 
-// Runs all six schedulers on one process file.
+// Runs all eight standard schedulers on one process file.
 static void demoScheduling(const std::string& path, int quantum) {
     std::cout << "\n######## Scheduling: " << path << " ########\n";
     for (const SchedResult& r : runAll(loadProcessesCsv(path), quantum)) printResult(r);
@@ -135,13 +135,11 @@ static void demoEngine(const std::string& path, Algo algo, int quantum, bool rea
 }
 
 // Maps a command-line name such as "rr" to an algorithm.
+// Uses the shared core mapping (algoId), unknown names fall back to FCFS.
 static Algo algoFromName(const std::string& n) {
-    if (n == "sjf") return Algo::SJF;
-    if (n == "srtf") return Algo::SRTF;
-    if (n == "rr") return Algo::RR;
-    if (n == "prio") return Algo::PRIORITY_NP;
-    if (n == "prio-p") return Algo::PRIORITY_P;
-    return Algo::FCFS;
+    Algo a = Algo::FCFS;
+    if (!algoFromId(n, a)) std::cerr << "unknown algorithm '" << n << "', using FCFS\n";
+    return a;
 }
 
 // Synchronization: the lost-update race step by step, every scenario's result, the
@@ -189,7 +187,7 @@ int main(int argc, char** argv) {
         if (cmd == "sched") {
             if (argc > 2) demoScheduling(argv[2], argc > 3 ? std::stoi(argv[3]) : 4);
             else for (const char* f : {"samples/processes_fcfs.csv", "samples/processes_srtf.csv",
-                                       "samples/processes_priority.csv"}) demoScheduling(f, 4);
+                                       "samples/processes_priority.csv", "samples/processes_ljf_lrtf.csv"}) demoScheduling(f, 4);
         } else if (cmd == "memory") {
             if (argc > 2) demoMemory(refArg(argv[2]), argc > 3 ? std::stoi(argv[3]) : 3);
             else {
@@ -217,7 +215,7 @@ int main(int argc, char** argv) {
             demoMemory(readTextFile("samples/refstring_standard.txt"), 3);
             demoDeadlock("samples/banker_sample.txt", "samples/deadlock_sample.txt");
         } else {
-            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]\n";
+            std::cerr << "usage: ossim_console [all | sched [file.csv] [quantum] | memory [refs|file] [frames] | deadlock [banker.txt] [detect.txt]\n                      | engine [file.csv] [fcfs|sjf|srtf|ljf|lrtf|rr|prio|prio-p] [quantum] [--real] | sync [--real]]\n";
             return 2;
         }
     } catch (const std::exception& e) {

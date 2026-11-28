@@ -1,0 +1,14 @@
+# processes=2 resources=2
+# Resource-allocation graph with a cycle, one instance per resource:
+# P0 holds R0 and requests R1, P1 holds R1 and requests R0 -> P0 -> R1 -> P1 -> R0 -> P0.
+# With single instances a cycle means deadlock: Detect reports P0 and P1.
+available: 0 0
+alloc:
+1 0
+0 1
+max:
+1 1
+1 1
+request:
+0 1
+1 0

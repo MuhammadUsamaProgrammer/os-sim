@@ -56,13 +56,21 @@ The read end is set to `O_NONBLOCK` with `fcntl`. The clock thread (the single d
 GUI, `EngineBridge` turns them into Qt signals.
 
 ### 8. CPU scheduling
-`core/scheduler.cpp`. One tick-based simulator, `runScheduler()`, handles all six algorithms. Each
+`core/scheduler.cpp`. One tick-based simulator, `runScheduler()`, handles all eight algorithms. Each
 tick it admits arrivals, asks `schedulerPick()` who runs, runs one tick and appends it to the Gantt
 timeline. `better()` holds the selection key: arrival for FCFS, remaining time for SJF/SRTF, the
 priority number for Priority. Ties go to earlier arrival, then lower pid.
 - Non-preemptive (FCFS, SJF, Priority NP): the running process keeps the CPU until it finishes.
 - Preemptive (SRTF, Priority P): every tick the running process competes again.
 - RR: after `quantum` ticks the process goes to the back of the queue, behind processes that arrive at that tick.
+- **LJF** (Longest Job First, non-preemptive): the longest burst among the ready processes runs to the
+  end. In `better()` the key is `-burst`, so the same "smaller key wins" code picks the longest.
+- **LRTF** (Longest Remaining Time First, preemptive): every tick `schedulerPick()` checks whether a ready
+  process has **strictly** more remaining time than the running one; only then it preempts. On a tie
+  the running process continues (avoids a needless context switch); with a free CPU ties go to the
+  earlier arrival, then the lower pid. LJF / LRTF are the mirror images of SJF / SRTF: they favour long
+  jobs, give poor average waiting times and can starve short jobs (sample "Starvation of a short job
+  under LJF": P2 waits 26 ticks). LRTF switches very often (16 switches on processes_srtf.csv).
 
 ### 9. Paging and page tables
 `FrameAllocator::allocateEqual()` (`core/memory.cpp`) divides the physical frames equally between
@@ -205,8 +213,8 @@ a signal. Qt delivers it through a **queued connection** to the GUI thread (`gui
     (overhead). RR gives good response time; in our comparison RR had the most context switches (7).
 
 14. **What is starvation, and which of your algorithms can starve?**
-    A ready process waits indefinitely. Priority scheduling (low-priority processes) and SJF/SRTF
-    (long jobs) can starve. The fix is **aging**: increase the priority of a process the longer it waits.
+    A ready process waits indefinitely. Priority scheduling (low-priority processes), SJF/SRTF
+    (long jobs) and LJF/LRTF (short jobs) can starve. The fix is **aging**: increase the priority of a process the longer it waits.
 
 15. **Define waiting, turnaround and response time.**
     Turnaround = completion − arrival. Waiting = turnaround − burst. Response = first time on the
@@ -447,3 +455,25 @@ a worker thread, and `apps/ossim_helper.cpp` performs real system calls on its o
 
 76. **Why can a writer starve in readers-writers?** With readers' preference new readers enter while others read;
     read_count never reaches 0, so rw_mutex is never released for the writer.
+
+77. **How do LJF and LRTF differ from SJF and SRTF?** Same structure, opposite key: SJF / SRTF choose the
+    SHORTEST (remaining) time, LJF / LRTF the LONGEST. LJF is non-preemptive like SJF; LRTF is preemptive
+    like SRTF. SJF / SRTF minimise average waiting time; LJF / LRTF maximise it, and starve short jobs.
+    In the code only `better()` (key `-burst` / `-remaining`) and one preemption rule in `schedulerPick()` differ.
+
+78. **Why does LRTF keep the running process on a tie?** Switching to another process with the SAME remaining
+    time gains nothing and costs a context switch. So LRTF preempts only for a strictly longer remaining
+    time; ties among waiting processes (CPU free) go to the earlier arrival, then the lower pid.
+
+79. **Why does LRTF cause so many context switches?** When the running process has run one tick, another
+    process often has one tick more remaining, so it takes over; the processes leapfrog each other tick by
+    tick until all remaining times are equal, and then all finish close together at the end.
+
+80. **Why did you append LJF and LRTF at the end of the enum?** So the old values (FCFS = 0 ... PRIORITY_P = 5)
+    do not change; the display order comes from `allAlgos()`, and combo boxes store the enum value, never the index.
+
+81. **How does the Load Sample button work?** Every sample is one `SampleDef` in `gui/SampleRegistry` (id, name,
+    description, module, category, mode, parameters, loader). The loaders call the module's existing code
+    (`loadPreset`, `loadCsv`, `loadFile`, core preset lists), so no workload is duplicated. Loading only fills
+    the inputs; a guard first stops / pauses a running simulation. The sample files are also compiled into the
+    program as Qt resources, so they work from any directory.

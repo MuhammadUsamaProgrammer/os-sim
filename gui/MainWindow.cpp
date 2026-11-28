@@ -51,6 +51,7 @@
 #include "Theme.h"
 #include "ModuleManager.h"
 #include "WorkspaceUi.h"
+#include "SampleRegistry.h"
 #include <QWidgetAction>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -158,8 +159,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     registerModules();
+    registerSamples();                   // central sample catalogue (gui/SampleCatalog.cpp)
+    installSampleButtons();              // one Load Sample button per module page
     buildMenus();
-    statusBar()->showMessage("Ready. Load a sample from File > Load sample, or enter processes.");
+    statusBar()->showMessage("Ready. Use the Load Sample button of any module (or File > Load Built-in Sample), or enter your own input.");
     loadSample(ui::samplesDir() + "/processes_fcfs.csv");
     modules_->restoreCurrentFromStore();          // the module selected when OS-Sim was closed
     for (QTabWidget* a : std::initializer_list<QTabWidget*>{tabs_, schedArea_, procArea_, memArea_, storage_})
@@ -303,12 +306,26 @@ void MainWindow::showMemoryTab() {
 
 void MainWindow::buildMenus() {
     QMenu* file = menuBar()->addMenu("&File");
+    // Load Built-in Sample: the same catalogue as the in-module Load Sample buttons, by module.
+    QMenu* builtin = file->addMenu("Load Built-in Sample");
+    builtin->setToolTipsVisible(true);
+    connect(builtin, &QMenu::aboutToShow, this, [this, builtin] { fillBuiltinSampleMenu(builtin); });
+    fillBuiltinSampleMenu(builtin);
+    // Load sample: every file in samples/ (original menu, unchanged behaviour)
     QMenu* samples = file->addMenu("Load sample");
+    samples->setToolTipsVisible(true);
     QDir dir(ui::samplesDir());
     for (const QString& f : dir.entryList({"*.csv", "*.txt"}, QDir::Files, QDir::Name)) {
         QString path = dir.absoluteFilePath(f);
-        samples->addAction(f, this, [this, path] { loadSample(path); });
+        QAction* a = samples->addAction(f, this, [this, path, f] {
+            if (const SampleDef* d = samples_->forFile(f)) revealModule(d->module, true);   // hidden target: ask first
+            loadSample(path);
+        });
+        if (const SampleDef* d = samples_->forFile(f)) a->setToolTip(d->description);
     }
+    QAction* open = file->addAction("Open File...", QKeySequence::Open, this, &MainWindow::openFileDialog);
+    open->setToolTip("Import your own file (processes CSV, reference string, matrices, lifecycle CSV, disk requests, virtual disk image)");
+    file->setToolTipsVisible(true);
     file->addAction("Export report...", this, &MainWindow::exportReport);
     file->addSeparator();
     file->addAction("Exit", QKeySequence::Quit, this, &QWidget::close);
@@ -733,7 +750,7 @@ int MainWindow::runSelfTest() {
             sched_->setAlgorithm(a);
             stCheck(sched_->runOnce(), QString("run %1 on %2").arg(algoName(a), f));
         }
-        stCheck(sched_->compareAll() && sched_->lastComparison().size() == 6, QString("compare all on ") + f);
+        stCheck(sched_->compareAll() && sched_->lastComparison().size() == allAlgos().size(), QString("compare all on ") + f);
     }
     loadSample(sd + "/processes_fcfs.csv");
     sched_->setAlgorithm(Algo::FCFS);
@@ -1607,6 +1624,9 @@ int MainWindow::runSelfTest() {
     tf.close(); cf.close();
     QFile::remove(base + ".txt");
     QFile::remove(base + ".csv");
+
+    // Built-in samples: Load Sample buttons, registry, File menu, visibility, themes, small windows
+    g_stFail += runSampleSelfTest();
 
     // Modules menu (Module Visibility Manager)
     runWorkspaceSelfTest();

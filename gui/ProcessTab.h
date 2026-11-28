@@ -17,6 +17,9 @@ public:
     // ---- actions (public for the menu and the self-test)
     bool loadPreset(int index);
     bool loadFile(const QString& path);                 // samples/lifecycle_*.csv
+    // Selects a Live Linux demo in the demo list WITHOUT starting it (the user presses Start).
+    bool selectLiveDemo(const QString& key);
+    static QString liveDemoText(const QString& key);    // one-line explanation of a live demo
     void setManual(bool manual);
     void setPolicy(Algo a, int quantum);
     bool rebuild();

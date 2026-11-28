@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include "MainWindow.h"
+#include "SampleRegistry.h"
 #include "Style.h"
 #include "Theme.h"
 #include "ModuleManager.h"
@@ -13,11 +14,14 @@
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("OS-Sim");
-    bool selftest = false, layoutReport = false;
+    bool selftest = false, layoutReport = false, sampleReport = false, loadAll = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--selftest") == 0) selftest = true;
         if (std::strcmp(argv[i], "--layout-report") == 0) layoutReport = true;
+        if (std::strcmp(argv[i], "--sample-report") == 0) sampleReport = true;
+        if (std::strcmp(argv[i], "--load-all") == 0) loadAll = true;
     }
+    if (sampleReport) layoutReport = true;              // same rules: default workspace, nothing saved
     // Workspace (Modules menu): the self-test and the layout report use the default workspace and
     // never write the user's settings.
     if (selftest || layoutReport) MainWindow::workspaceStore().clear();
@@ -27,6 +31,17 @@ int main(int argc, char** argv) {
     ui::applyTheme(dark);
     MainWindow w;
     if (selftest) return w.runSelfTest();
+    // --sample-report [--load-all] : print the built-in sample inventory (module > category > sample),
+    // and with --load-all load every sample once (exit 1 if one fails). Works from any directory.
+    if (sampleReport) {
+        ui::selfTestMode() = true;
+
+        std::printf("samples folder: %s%s\n", qPrintable(ui::samplesDir()), ui::usingEmbeddedSamples() ? " (embedded copy)" : "");
+        std::printf("%s", qPrintable(w.sampleReport()));
+        int fail = loadAll ? w.loadAllSamples(true) : 0;
+        if (loadAll) std::printf("[samples] %d failure(s)\n", fail);
+        return fail ? 1 : 0;
+    }
     // --layout-report 1366x768,1920x1080 : audit every tab at those window sizes (exit 1 on problems)
     for (int i = 1; i + 1 < argc; ++i)
         if (std::strcmp(argv[i], "--layout-report") == 0) {

@@ -28,6 +28,8 @@ public:
 
     bool checkSafety();
     bool requestResources(int row, const QString& requestText);
+    // Fills the request inputs (row + vector) without sending the request (used by samples).
+    void prefillRequest(int row, const QString& requestText);
     bool detect();
     bool recover(int stepDelayMs = 700);            // 0 = apply all steps at once
 

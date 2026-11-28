@@ -28,6 +28,7 @@
 #include "SyncBridge.h"
 #include "SyncViews.h"
 #include "PanelLayout.h"
+#include "ModuleKit.h"
 
 static QSpinBox* makeSpin(int lo, int hi, int v, const QString& tip = QString()) {
     auto* s = new QSpinBox;
@@ -144,7 +145,7 @@ SyncTab::SyncTab(QWidget* parent) : QWidget(parent) {
     ll->addWidget(paramBox);
     ll->addWidget(ctlBox);
     ll->addWidget(expBox, 1);
-    auto* leftScroll = new ConfigPanel(leftW);   // shared responsive panel (no width cap, scrolls as needed)
+    auto* leftScroll = new ConfigPanel(withSampleSlot(leftW));   // shared responsive panel (no width cap, scrolls as needed)
 
     // ================= right: status, process cards, scene / code / variables, bottom pages
     status_ = new QLabel;

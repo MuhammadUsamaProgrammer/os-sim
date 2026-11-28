@@ -1,6 +1,7 @@
 // scheduler.cpp - FCFS, SJF, SRTF, Round Robin and Priority scheduling.
 #include "scheduler.h"
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -14,13 +15,44 @@ const char* algoName(Algo a) {
         case Algo::RR:          return "Round Robin";
         case Algo::PRIORITY_NP: return "Priority (NP)";
         case Algo::PRIORITY_P:  return "Priority (P)";
+        case Algo::LJF:         return "LJF";
+        case Algo::LRTF:        return "LRTF";
     }
     return "?";
 }
 
+// Short identifier used by the console demo and sample files.
+const char* algoId(Algo a) {
+    switch (a) {
+        case Algo::FCFS:        return "fcfs";
+        case Algo::SJF:         return "sjf";
+        case Algo::SRTF:        return "srtf";
+        case Algo::RR:          return "rr";
+        case Algo::PRIORITY_NP: return "prio";
+        case Algo::PRIORITY_P:  return "prio-p";
+        case Algo::LJF:         return "ljf";
+        case Algo::LRTF:        return "lrtf";
+    }
+    return "?";
+}
+
+// Reverse of algoId(); case-insensitive.
+bool algoFromId(const std::string& id, Algo& out) {
+    std::string low;
+    for (char c : id) low += (char)std::tolower((unsigned char)c);
+    for (Algo a : allAlgos())
+        if (low == algoId(a)) { out = a; return true; }
+    return false;
+}
+
+// Preemptive algorithms can move Running -> Ready without the process finishing.
+bool isPreemptive(Algo a) {
+    return a == Algo::SRTF || a == Algo::LRTF || a == Algo::RR || a == Algo::PRIORITY_P;
+}
+
 // Fixed list of all algorithms.
 const std::vector<Algo>& allAlgos() {
-    static const std::vector<Algo> v = {Algo::FCFS, Algo::SJF, Algo::SRTF,
+    static const std::vector<Algo> v = {Algo::FCFS, Algo::SJF, Algo::SRTF, Algo::LJF, Algo::LRTF,
                                         Algo::RR, Algo::PRIORITY_NP, Algo::PRIORITY_P};
     return v;
 }
@@ -49,9 +81,14 @@ void makeReady(std::vector<PCB>& procs, SchedState& st, int idx) {
 
 // Returns true if process a should be chosen before process b for this algorithm.
 // Tie rule (deterministic): same key -> earlier arrival -> lower pid.
+// "Longest" algorithms negate the key so that the smaller key still wins.
 static bool better(Algo algo, const PCB& a, const PCB& b) {
     int ka = 0, kb = 0;
     switch (algo) {
+        case Algo::LJF:                                    // longest CPU burst first
+            ka = -a.burst; kb = -b.burst; break;
+        case Algo::LRTF:                                   // longest remaining time first
+            ka = -a.remaining; kb = -b.remaining; break;
         case Algo::SJF: case Algo::SRTF:
             ka = a.remaining; kb = b.remaining; break;     // shortest (remaining) job
         case Algo::PRIORITY_NP: case Algo::PRIORITY_P:
@@ -72,6 +109,12 @@ int schedulerPick(Algo algo, std::vector<PCB>& procs, SchedState& st, int quantu
             preempt = st.sliceUsed >= quantum;          // quantum expired
         else if (algo == Algo::SRTF || algo == Algo::PRIORITY_P)
             preempt = true;                              // re-compete every tick
+        else if (algo == Algo::LRTF) {
+            // LRTF: preempt only if a ready process has STRICTLY more remaining time.
+            // On a tie the running process keeps the CPU (no needless context switch).
+            for (int r : st.ready)
+                if (procs[r].remaining > procs[st.running].remaining) { preempt = true; break; }
+        }
         if (preempt) {
             // New arrivals were already queued by the caller, so in RR the
             // preempted process goes behind them (required rule).

@@ -18,6 +18,8 @@ public:
     // Where the page-table panel gets the process list from (the Scheduling tab).
     void setProcessProvider(std::function<std::vector<PCB>()> f) { procs_ = std::move(f); refreshPids(); }
     bool loadRefFile(const QString& path);
+    // Removes the previous results (frame tables, summaries, chart); inputs stay.
+    void clearResults();
     void setRefString(const QString& s);
     void setFrames(int n);
     void setMode(int index);                  // 0 FIFO, 1 LRU, 2 Optimal, 3 Compare all

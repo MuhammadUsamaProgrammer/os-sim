@@ -3,13 +3,23 @@
 // by one tick-based simulator; schedulerPick() is the "dispatcher decision"
 // for a single tick and is shared with the integrated run (Stage 9).
 #pragma once
+#include <string>
 #include <vector>
 #include "pcb.h"
 
-enum class Algo { FCFS, SJF, SRTF, RR, PRIORITY_NP, PRIORITY_P };
+// LJF and LRTF were added later; they are appended so the old enum values stay unchanged.
+// Never cast a combo-box index to Algo: allAlgos() order differs from the enum order.
+enum class Algo { FCFS, SJF, SRTF, RR, PRIORITY_NP, PRIORITY_P, LJF, LRTF };
 const char* algoName(Algo);
-// All six algorithms in a fixed order (used by runAll and the GUI combo box).
+// All eight standard algorithms in display order: FCFS, SJF, SRTF, LJF, LRTF, RR,
+// Priority (NP), Priority (P). Used by runAll and the GUI combo boxes.
 const std::vector<Algo>& allAlgos();
+// True for algorithms that can take the CPU away from a running process.
+bool isPreemptive(Algo);
+// Short console / CSV id ("fcfs", "sjf", "srtf", "ljf", "lrtf", "rr", "prio", "prio-p").
+const char* algoId(Algo);
+// Parses algoId() (case-insensitive) back to an Algo; returns false if unknown.
+bool algoFromId(const std::string& id, Algo& out);
 
 struct Segment { int pid; int start; int end; };   // pid == -1 means CPU idle
 
@@ -28,7 +38,7 @@ struct SchedResult {
 // Runs one algorithm on a copy of the processes and returns the full result.
 // Throws std::invalid_argument on bad input.
 SchedResult runScheduler(Algo, std::vector<PCB> procs, int quantum = 4);
-// Runs all six algorithms on the same input.
+// Runs all eight standard algorithms (allAlgos() order) on the same input.
 std::vector<SchedResult> runAll(const std::vector<PCB>&, int quantum);
 // Checks burst > 0, arrival >= 0, unique pids (and quantum > 0 when RR is used).
 void validateProcesses(const std::vector<PCB>&, Algo algo, int quantum);

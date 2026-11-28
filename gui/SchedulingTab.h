@@ -19,6 +19,8 @@ public:
     bool readProcesses(std::vector<PCB>& out, bool quiet = false);
     void setProcesses(const std::vector<PCB>& procs);
     bool loadCsv(const QString& path);       // also used by File -> Load sample
+    // Removes the results of the previous workload (Gantt, tables, chart); inputs stay.
+    void clearResults();
     bool saveCsv(const QString& path);
     void setAlgorithm(Algo a);
     void setQuantum(int q);

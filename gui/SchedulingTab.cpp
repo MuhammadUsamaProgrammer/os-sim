@@ -17,6 +17,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include "PanelLayout.h"
+#include "ModuleKit.h"
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -56,7 +57,10 @@ SchedulingTab::SchedulingTab(QWidget* parent) : QWidget(parent) {
     // ---- left: algorithm controls ----
     auto* algoBox = new QGroupBox("Scheduler");
     algoCombo_ = new QComboBox;
-    for (Algo a : allAlgos()) algoCombo_->addItem(algoName(a), (int)a);
+    for (Algo a : allAlgos()) {
+        algoCombo_->addItem(algoName(a), (int)a);
+        algoCombo_->setItemData(algoCombo_->count() - 1, ui::algoExplanation(a), Qt::ToolTipRole);
+    }
     quantumSpin_ = new QSpinBox;
     quantumSpin_->setRange(1, 100);
     quantumSpin_->setValue(4);
@@ -185,7 +189,7 @@ SchedulingTab::SchedulingTab(QWidget* parent) : QWidget(parent) {
     rightSplit->addPanel(ConfigPanel::wrap(outTabs_, "detailPanel"), PanelSplitter::Detail, 2);
 
     auto* main = new PanelSplitter(Qt::Horizontal, "Scheduling/h");
-    main->addPanel(new ConfigPanel(left), PanelSplitter::Config, 1, 0.42);
+    main->addPanel(new ConfigPanel(withSampleSlot(left)), PanelSplitter::Config, 1, 0.42);
     main->addPanel(rightSplit, PanelSplitter::Center);
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
@@ -304,6 +308,19 @@ bool SchedulingTab::readProcesses(std::vector<PCB>& out, bool quiet) {
         return fail(QString("Invalid input: %1").arg(e.what()));
     }
     return true;
+}
+
+void SchedulingTab::clearResults() {
+    stopAnimation();
+    last_.reset();
+    compare_.clear();
+    integ_.reset();
+    gantt_->setTimeline({});
+    resultTable_->setRowCount(0);
+    stateTable_->setRowCount(0);
+    compareTable_->setRowCount(0);
+    summaryLabel_->setText("Run a scheduler to see the results.");
+    chart_->clear();
 }
 
 bool SchedulingTab::loadCsv(const QString& path) {
@@ -485,7 +502,7 @@ void SchedulingTab::onEngineFinished() {
     emit animationFinished();
 }
 
-// Runs all six algorithms; best value of each column in bold green; bar chart.
+// Runs all eight standard algorithms; best value of each column in bold green; bar chart.
 bool SchedulingTab::compareAll() {
     std::vector<PCB> procs;
     if (!readProcesses(procs)) return false;

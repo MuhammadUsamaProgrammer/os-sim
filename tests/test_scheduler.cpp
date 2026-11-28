@@ -85,11 +85,11 @@ int main() {
     CHECK_THROWS(runScheduler(Algo::RR, {P(1, 0, 3)}, 0), std::invalid_argument);
     CHECK_THROWS(runScheduler(Algo::FCFS, {}), std::invalid_argument);
 
-    // runAll gives six results; CSV sample loads and gives avg WT 17
+    // runAll gives one result per standard algorithm (eight since LJF/LRTF); CSV sample avg WT 17
     std::vector<PCB> loaded = loadProcessesCsv(samplePath("processes_fcfs.csv"));
     CHECK(loaded.size() == 3);
     std::vector<SchedResult> all = runAll(loaded, 4);
-    CHECK(all.size() == 6);
+    CHECK(all.size() == 8 && all.size() == allAlgos().size());
     CHECK_NEAR(all[0].avgWaiting, 17.0);
     CHECK_THROWS(loadProcessesCsv(samplePath("does_not_exist.csv")), std::runtime_error);
 

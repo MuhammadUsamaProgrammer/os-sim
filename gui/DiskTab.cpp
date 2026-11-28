@@ -358,6 +358,18 @@ bool DiskTab::compare() {
     return true;
 }
 
+QStringList DiskTab::presetNames() {
+    QStringList n;
+    for (const Preset& p : presets()) n << p.name;
+    return n;
+}
+
+QString DiskTab::presetParams(int index) {
+    if (index < 0 || index >= (int)presets().size()) return QString();
+    const Preset& p = presets()[index];
+    return QString("cylinders %1-%2, head %3, %4 request(s)").arg(p.minC).arg(p.maxC).arg(p.head).arg(p.req.size());
+}
+
 bool DiskTab::loadPreset(int index) {
     if (index < 0 || index >= (int)presets().size()) return false;
     const Preset& p = presets()[index];

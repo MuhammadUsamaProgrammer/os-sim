@@ -1,5 +1,5 @@
 # One executable per module; each returns non-zero on failure.
-foreach(t test_scheduler test_memory test_deadlock test_engine test_integrated test_sync test_sync_engine test_disk test_procmgmt test_io test_memadv test_ipc test_threads test_vfs test_heap test_sysmon test_jobctl test_rtsched test_sync_classic test_mlq test_workspace)
+foreach(t test_scheduler test_memory test_deadlock test_engine test_integrated test_sync test_sync_engine test_disk test_procmgmt test_io test_memadv test_ipc test_threads test_vfs test_heap test_sysmon test_jobctl test_rtsched test_sync_classic test_mlq test_workspace test_ljf_lrtf)
   add_executable(${t} ${t}.cpp)
   target_link_libraries(${t} PRIVATE osengine oscore)
   target_compile_definitions(${t} PRIVATE OSSIM_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

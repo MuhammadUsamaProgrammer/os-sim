@@ -14,6 +14,7 @@
 #include <QSplitter>
 #include <QFormLayout>
 #include "PanelLayout.h"
+#include "ModuleKit.h"
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -97,7 +98,7 @@ MemoryTab::MemoryTab(QWidget* parent) : QWidget(parent) {
     il->addWidget(inBox);
     il->addStretch();
     auto* body = new PanelSplitter(Qt::Horizontal, "Memory/PageReplacement/h");
-    body->addPanel(new ConfigPanel(inW), PanelSplitter::Config, 1, 0.3);
+    body->addPanel(new ConfigPanel(withSampleSlot(inW)), PanelSplitter::Config, 1, 0.3);
     body->addPanel(outSplit, PanelSplitter::Center);
     body->addPanel(ConfigPanel::wrap(ptBox, "inspectorPanel"), PanelSplitter::Inspector, 1, 0.26);
     auto* lay = new QVBoxLayout(this);
@@ -119,6 +120,16 @@ MemoryTab::MemoryTab(QWidget* parent) : QWidget(parent) {
     connect(belBtn, &QPushButton::clicked, this, &MemoryTab::beladyExample);
     connect(pidCombo_, &QComboBox::currentIndexChanged, this, &MemoryTab::showPageTable);
     connect(physSpin_, &QSpinBox::valueChanged, this, &MemoryTab::showPageTable);
+}
+
+void MemoryTab::clearResults() {
+    results_.clear();
+    while (tables_->count()) { QWidget* w = tables_->widget(0); tables_->removeTab(0); delete w; }
+    QLayout* sl = summaryRow_->layout();
+    while (QLayoutItem* it = sl->takeAt(0)) { delete it->widget(); delete it; }
+    chart_->clear();
+    beladyLabel_->clear();
+    belady_.clear();
 }
 
 void MemoryTab::setRefString(const QString& s) { refEdit_->setText(s); }

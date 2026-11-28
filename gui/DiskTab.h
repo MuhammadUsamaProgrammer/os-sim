@@ -17,6 +17,8 @@ public:
     // ---- actions (public for the menu and the self-test)
     bool loadFile(const QString& path);           // samples/disk_*.txt
     bool loadPreset(int index);
+    static QStringList presetNames();             // built-in request queues (index = loadPreset)
+    static QString presetParams(int index);       // "head 53, 8 requests, 0-199"
     bool setConfig(const DiskConfig& c);          // fills the editor and rebuilds
     void setAlgorithm(DiskAlgo a);
     bool rebuild();                               // new trace from the inputs (false + message if invalid)

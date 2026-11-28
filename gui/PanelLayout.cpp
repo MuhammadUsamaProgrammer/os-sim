@@ -118,7 +118,11 @@ QSize ConfigPanel::sizeHint() const {
 
 QSize ConfigPanel::minimumSizeHint() const {
     int sb = style()->pixelMetric(QStyle::PM_ScrollBarExtent);
-    return QSize(fontMetrics().averageCharWidth() * 18 + sb, fontMetrics().height() * 4);
+    int w = fontMetrics().averageCharWidth() * 18 + sb;
+    // The Load Sample control at the top (ModuleKit withSampleSlot) must never be cut off.
+    if (QWidget* slot = widget() ? widget()->findChild<QWidget*>("sampleSlot") : nullptr)
+        if (!slot->isHidden()) w = std::max(w, slot->minimumSizeHint().width() + sb + 4);
+    return QSize(w, fontMetrics().height() * 4);
 }
 
 // ================================================================ PageScroll

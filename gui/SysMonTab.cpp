@@ -506,6 +506,17 @@ void SystemMonitorPage::updateWorkerButtons() {
     wKill_->setEnabled(run);
 }
 
+void SystemMonitorPage::applyDemoConfig(int seconds, int mib, int busy, int cpuThr, int memThr, int debounce) {
+    wSeconds_->setValue(seconds);
+    wMib_->setValue(mib);
+    wBusy_->setValue(busy);
+    cpuThr_->setValue(cpuThr);
+    memThr_->setValue(memThr);
+    debounce_->setValue(debounce);
+    header_->setStatus(QString("Demo worker prepared: %1 s, %2 MiB, %3 % CPU - press Start worker to run it "
+                               "(an application-owned helper process)").arg(seconds).arg(mib).arg(busy));
+}
+
 bool SystemMonitorPage::startWorker(int seconds, int mib, int busy) {
     if (workerRunning() || NativeRunner::helperPath().isEmpty()) return false;
     if (!worker_) {

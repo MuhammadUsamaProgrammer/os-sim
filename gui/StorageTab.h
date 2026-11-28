@@ -34,6 +34,8 @@ public:
     void setCwd(const QString& dir);
     QString cwd() const { return cwd_; }
     void select(const QString& path);
+    // Fills the path / destination fields (used by samples; nothing is executed).
+    void prefill(const QString& path, const QString& dest = QString());
     // op: mkdir create write append read delete rmdir rename copy link symlink (b = destination / target / text)
     FsResult apply(const QString& op, const QString& a, const QString& b = QString());
     // op: open-r open-rw open-append read write seek dup close
@@ -77,6 +79,7 @@ public:
     // matrix cell: is op allowed for the user (row order = VirtualFs::users())
     bool matrixAllowed(int userRow, int opColumn) const;
     static QStringList ops();
+    static QStringList presetNames();               // permission presets (index = applyPreset)
 private:
     void refreshMatrix();
     StorageArea* area_;

@@ -1,0 +1,9 @@
+# Simultaneous arrivals with equal bursts (tie-breaking).
+# LJF : P2 0-6, P4 6-12 (P2 and P4 both 6 -> lower pid first), P3 12-16, P1 16-19 -> avg WT 8.5
+# LRTF: the running process keeps the CPU while another one has the SAME remaining time;
+#       it is preempted only by a strictly longer remaining time.
+pid,arrival,burst,priority,pages
+1,0,3,1,2
+2,0,6,1,3
+3,0,4,1,2
+4,0,6,1,3
